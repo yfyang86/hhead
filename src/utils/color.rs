@@ -82,15 +82,16 @@ mod tests {
 
     #[test]
     fn test_rgb_to_256_boundaries() {
-        // Test that function never returns invalid values
-        for r in 0..=255 {
-            for g in 0..=255 {
-                for b in 0..=255 {
-                    if r % 64 == 0 && g % 64 == 0 && b % 64 == 0 {
-                        // Sample every 64 values to avoid slow test
-                        let result = rgb_to_256(r, g, b);
-                        assert!(result <= 255, "rgb_to_256({}, {}, {}) = {} > 255", r, g, b, result);
-                    }
+        // Sample a sparse grid of the RGB cube and verify the returned palette
+        // index is always in the RGB-cube or grayscale region (16..=255).
+        for r in (0..=255u8).step_by(64) {
+            for g in (0..=255u8).step_by(64) {
+                for b in (0..=255u8).step_by(64) {
+                    let result = rgb_to_256(r, g, b);
+                    assert!(
+                        (16..=255).contains(&result),
+                        "rgb_to_256({r}, {g}, {b}) = {result} out of range"
+                    );
                 }
             }
         }

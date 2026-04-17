@@ -11,8 +11,10 @@ pub fn extract_format_metadata(data: &[u8]) -> Vec<String> {
 
     match format {
         "PNG" => {
-            if data.len() >= 24 {
-                // PNG IHDR chunk starts at offset 8
+            // PNG layout: 8-byte signature, 4-byte IHDR length, 4-byte "IHDR", then
+            // width (4), height (4), bit depth (1), color type (1). We need 26 bytes
+            // and the chunk at offset 12 must be "IHDR" before we trust the data.
+            if data.len() >= 26 && &data[12..16] == b"IHDR" {
                 let width = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
                 let height = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
                 let bit_depth = data[24];
@@ -31,7 +33,14 @@ pub fn extract_format_metadata(data: &[u8]) -> Vec<String> {
             }
         }
         "BMP" => {
-            if data.len() >= 54 {
+            // We only parse V3 BITMAPINFOHEADER or larger (size >= 40 at offset 14).
+            // Earlier BITMAPCOREHEADER variants have a different layout.
+            let header_size = if data.len() >= 18 {
+                u32::from_le_bytes([data[14], data[15], data[16], data[17]])
+            } else {
+                0
+            };
+            if data.len() >= 54 && header_size >= 40 {
                 // BITMAPINFOHEADER starts at offset 14, width at offset 18, height at offset 22
                 let width = i32::from_le_bytes([data[18], data[19], data[20], data[21]]);
                 let height = i32::from_le_bytes([data[22], data[23], data[24], data[25]]);
@@ -58,24 +67,44 @@ pub fn extract_format_metadata(data: &[u8]) -> Vec<String> {
             }
         }
         "JPEG" => {
-            // JPEG parsing is more complex due to segmented format
-            // Look for SOF0 (Start Of Frame 0) marker: FF C0 to FF CF
-            let mut i = 2; // Skip initial FF D8
+            // JPEG is a sequence of 0xFF-prefixed markers. Walk segments looking for
+            // an SOFn frame marker (0xC0..=0xCF, excluding the DHT/JPG/DAC specials).
+            // SOF2/6/10/14 are arithmetic/differential variants we still handle the same way.
+            let mut i = 2; // Skip initial SOI (FF D8)
             while i + 9 < data.len() {
-                if data[i] == 0xFF && data[i+1] >= 0xC0 && data[i+1] <= 0xCF {
-                    let height = (u16::from(data[i+5]) << 8) | u16::from(data[i+6]);
-                    let width = (u16::from(data[i+7]) << 8) | u16::from(data[i+8]);
-                    let components = data[i+9];
+                if data[i] != 0xFF {
+                    i += 1;
+                    continue;
+                }
+                let marker = data[i + 1];
+                // SOFn frame markers carry frame geometry in their payload.
+                // Skip DHT (C4), JPG (C8), DAC (CC): these are not frame headers.
+                let is_sof = (0xC0..=0xCF).contains(&marker)
+                    && marker != 0xC4
+                    && marker != 0xC8
+                    && marker != 0xCC;
+                if is_sof {
+                    let height = (u16::from(data[i + 5]) << 8) | u16::from(data[i + 6]);
+                    let width = (u16::from(data[i + 7]) << 8) | u16::from(data[i + 8]);
+                    let components = data[i + 9];
                     metadata.push(format!("  Dimensions: {} x {}", width, height));
                     metadata.push(format!("  Components: {}", components));
                     break;
                 }
-                if data[i] == 0xFF {
-                    let segment_len = (u16::from(data[i+2]) << 8) | u16::from(data[i+3]);
-                    i += usize::from(segment_len) + 2;
-                } else {
-                    i += 1;
+                // Non-SOF marker: advance past its length-prefixed payload.
+                // Standalone markers (D0..D9, 01) have no length field.
+                if marker == 0x01 || (0xD0..=0xD9).contains(&marker) {
+                    i += 2;
+                    continue;
                 }
+                if i + 3 >= data.len() {
+                    break;
+                }
+                let segment_len = (u16::from(data[i + 2]) << 8) | u16::from(data[i + 3]);
+                if segment_len < 2 {
+                    break;
+                }
+                i += 2 + usize::from(segment_len);
             }
         }
         "GIF" => {
@@ -296,6 +325,36 @@ mod tests {
         assert!(metadata.iter().any(|s| s.contains("Dimensions: 320 x 240")));
         assert!(metadata.iter().any(|s| s.contains("Global color table: true")));
         assert!(metadata.iter().any(|s| s.contains("Color resolution: 8 bits")));
+    }
+
+    #[test]
+    fn test_extract_jpeg_metadata_skips_app_segment() {
+        // SOI + APP0 (FF E0) of length 16 + SOF0 (FF C0) with a 640x480, 3-component frame.
+        let mut jpeg = vec![0xFF, 0xD8]; // SOI
+        jpeg.extend_from_slice(&[0xFF, 0xE0, 0x00, 16]); // APP0 marker, segment length 16
+        jpeg.extend_from_slice(&[0; 14]); // 16-byte segment including the length field
+        jpeg.extend_from_slice(&[0xFF, 0xC0]); // SOF0
+        jpeg.extend_from_slice(&[0x00, 0x11]); // segment length (unused by parser)
+        jpeg.push(8); // precision
+        jpeg.extend_from_slice(&480u16.to_be_bytes()); // height
+        jpeg.extend_from_slice(&640u16.to_be_bytes()); // width
+        jpeg.push(3); // components
+        jpeg.extend_from_slice(&[0; 20]); // remainder / padding
+
+        let metadata = extract_format_metadata(&jpeg);
+        assert!(metadata.iter().any(|s| s.contains("Dimensions: 640 x 480")), "{metadata:?}");
+        assert!(metadata.iter().any(|s| s.contains("Components: 3")), "{metadata:?}");
+    }
+
+    #[test]
+    fn test_extract_png_metadata_rejects_wrong_chunk_type() {
+        // Valid PNG signature but the chunk at offset 12 is not "IHDR".
+        let mut data = vec![0u8; 30];
+        data[0..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        data[8..12].copy_from_slice(&13u32.to_be_bytes());
+        data[12..16].copy_from_slice(b"IEND"); // wrong chunk
+        let metadata = extract_format_metadata(&data);
+        assert!(metadata.is_empty(), "should refuse to decode non-IHDR first chunk: {metadata:?}");
     }
 
     #[test]
