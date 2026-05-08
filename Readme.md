@@ -5,6 +5,8 @@ A Rust CLI hex-dump utility inspired by UltraEdit's binary viewer. `hhead` shows
 ![main](./assets/main.gif)
 
 > Looking to hack on `hhead` or send a pull request? See [DEVELOPMENT.md](./DEVELOPMENT.md).
+>
+> Long-form recipes, FAQ, and format-internals reference live in the [project wiki](https://github.com/yfyang86/hhead/wiki) (sources in [`wiki/`](./wiki)).
 
 ---
 
