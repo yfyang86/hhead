@@ -1,12 +1,12 @@
 //! Metadata display functionality
 
+use crate::formats::detection::detect_file_format;
+use crate::formats::metadata::extract_format_metadata;
 use std::fs;
 use std::io;
 use std::io::Read;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
-use crate::formats::detection::detect_file_format;
-use crate::formats::metadata::extract_format_metadata;
 
 fn format_system_time(t: io::Result<SystemTime>) -> String {
     match t {
@@ -26,7 +26,11 @@ fn format_permissions(perm: &fs::Permissions) -> String {
 
 #[cfg(not(unix))]
 fn format_permissions(perm: &fs::Permissions) -> String {
-    if perm.readonly() { "read-only".to_string() } else { "read-write".to_string() }
+    if perm.readonly() {
+        "read-only".to_string()
+    } else {
+        "read-write".to_string()
+    }
 }
 
 /// Print file metadata including format information
@@ -43,7 +47,10 @@ pub fn print_metadata(path: &Path) -> io::Result<()> {
     println!("Created: {}", format_system_time(metadata.created()));
     println!("Modified: {}", format_system_time(metadata.modified()));
     println!("Accessed: {}", format_system_time(metadata.accessed()));
-    println!("Permissions: {}", format_permissions(&metadata.permissions()));
+    println!(
+        "Permissions: {}",
+        format_permissions(&metadata.permissions())
+    );
 
     // Read first 1024 bytes for format detection
     let mut file = fs::File::open(path)?;
