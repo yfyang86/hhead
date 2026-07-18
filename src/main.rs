@@ -3,7 +3,7 @@ use colored::control;
 use std::path::Path;
 
 use hhead::cli::Args;
-use hhead::display::{display_hex, display_minimap, print_metadata};
+use hhead::display::{display_hex, display_markdown, display_minimap, print_metadata};
 use hhead::io::read_file;
 use hhead::utils::parsing::parse_scale;
 
@@ -49,6 +49,21 @@ fn main() -> std::io::Result<()> {
                 );
             }
         }
+    }
+
+    // Markdown mode renders the document instead of the hex dump.
+    if args.markdown {
+        let (rows, cols) = match parse_scale(&args.minimap_scale) {
+            Some(rc) => rc,
+            None => {
+                eprintln!(
+                    "Warning: Invalid minimap scale format '{}', expected 'ROWSxCOLS' (e.g., '8x12'); using 8x12",
+                    args.minimap_scale
+                );
+                (8, 12)
+            }
+        };
+        return display_markdown(path, args.color, rows, cols);
     }
 
     // Read file

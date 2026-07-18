@@ -122,7 +122,7 @@ fn test_cli_minimap_invalid_scale() -> Result<(), Box<dyn std::error::Error>> {
         0x00, 0x00, 0x00, 0x01, // width
         0x00, 0x00, 0x00, 0x01, // height
         0x08, 0x02, 0x00, 0x00, 0x00, // bit depth, color type, etc.
-        0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82 // IEND
+        0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82, // IEND
     ];
     temp_file.write_all(&png_data)?;
 
@@ -140,6 +140,43 @@ fn test_cli_minimap_invalid_scale() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn test_cli_markdown_renders_table_not_hex() -> Result<(), Box<dyn std::error::Error>> {
+    let mut temp_file = NamedTempFile::new()?;
+    temp_file.write_all(b"# Doc\n\n| a | b |\n|---|---|\n| 1 | 2 |\n")?;
+
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input").arg(temp_file.path()).arg("--markdown");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("Doc"))
+        .stdout(predicate::str::contains("| a | b |"))
+        // Markdown mode overrides the hex dump entirely.
+        .stdout(predicate::str::contains("00000000:").not());
+
+    Ok(())
+}
+
+#[test]
+fn test_cli_markdown_reads_whole_file() -> Result<(), Box<dyn std::error::Error>> {
+    // The default --bytes limit (256) must not truncate Markdown rendering.
+    let mut temp_file = NamedTempFile::new()?;
+    let mut content = String::new();
+    for _ in 0..100 {
+        content.push_str("filler line\n");
+    }
+    content.push_str("# END MARKER\n");
+    temp_file.write_all(content.as_bytes())?;
+
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input").arg(temp_file.path()).arg("--markdown");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("END MARKER"));
+
+    Ok(())
+}
+
+#[test]
 fn test_cli_png_metadata() -> Result<(), Box<dyn std::error::Error>> {
     // Create a minimal PNG file
     let mut temp_file = NamedTempFile::new()?;
@@ -150,7 +187,7 @@ fn test_cli_png_metadata() -> Result<(), Box<dyn std::error::Error>> {
         0x00, 0x00, 0x00, 0x01, // width
         0x00, 0x00, 0x00, 0x01, // height
         0x08, 0x02, 0x00, 0x00, 0x00, // bit depth, color type, etc.
-        0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82 // IEND
+        0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82, // IEND
     ];
     temp_file.write_all(&png_data)?;
 

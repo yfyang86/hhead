@@ -35,6 +35,10 @@ pub struct Args {
     /// Minimap scale in format "ROWSxCOLS" (e.g., "8x12")
     #[arg(long, default_value = "8x12")]
     pub minimap_scale: String,
+
+    /// Render input as Markdown instead of a hex dump (figures use the minimap renderer)
+    #[arg(long, default_value_t = false)]
+    pub markdown: bool,
 }
 
 impl Args {

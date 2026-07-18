@@ -21,7 +21,11 @@ pub fn detect_file_format(data: &[u8]) -> &'static str {
         return "GIF";
     }
     // ZIP: requires at least 4 bytes
-    if data.len() >= 4 && (data.starts_with(b"PK\x03\x04") || data.starts_with(b"PK\x05\x06") || data.starts_with(b"PK\x07\x08")) {
+    if data.len() >= 4
+        && (data.starts_with(b"PK\x03\x04")
+            || data.starts_with(b"PK\x05\x06")
+            || data.starts_with(b"PK\x07\x08"))
+    {
         return "ZIP";
     }
     // GZIP: requires at least 2 bytes

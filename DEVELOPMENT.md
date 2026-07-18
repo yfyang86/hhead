@@ -40,7 +40,7 @@ cargo check
 cargo run -- --input Cargo.toml --meta --width 32
 ```
 
-The test suite currently covers 39 unit tests (format detection, metadata extraction, hex formatting, color palette, argument parsing) and 10 integration tests that drive the CLI end-to-end via `assert_cmd`.
+The test suite currently covers 55 unit tests (format detection, metadata extraction, hex formatting, Markdown rendering, color palette, argument parsing) and 12 integration tests that drive the CLI end-to-end via `assert_cmd`.
 
 ## Project layout
 
@@ -67,6 +67,7 @@ hhead/
 │   ├── display/
 │   │   ├── mod.rs
 │   │   ├── hex.rs              # `display_hex` / `write_hex<W: Write>`
+│   │   ├── markdown.rs         # `display_markdown` / `write_markdown<W: Write>` terminal renderer
 │   │   ├── metadata.rs         # `print_metadata`
 │   │   └── minimap.rs          # 256-color image thumbnail renderer
 │   └── utils/
@@ -87,7 +88,7 @@ args (clap)  ──▶  main.rs
                    ├── io::read_file        (bounded read into Vec<u8>)
                    ├── formats::detection   (magic-byte → &'static str)
                    ├── formats::metadata    (format → Vec<String> fields)
-                   └── display::{hex, metadata, minimap}
+                   └── display::{hex, markdown, metadata, minimap}
                                  │
                                  └── utils::{color, parsing}
 ```
@@ -126,6 +127,9 @@ cargo run -- --input assets/main.gif --color --meta --width 32
 
 # try the minimap
 cargo run -- --input assets/main.gif --minimap --minimap-scale 16x40
+
+# render markdown (tables aligned, figures drawn as minimaps)
+cargo run -- --input Readme.md --markdown --color
 ```
 
 ## Release build
