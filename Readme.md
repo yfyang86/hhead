@@ -19,6 +19,7 @@ A Rust CLI hex-dump utility inspired by UltraEdit's binary viewer. `hhead` shows
 - **Format detection** — PNG, JPEG, GIF, BMP, ZIP, GZIP, TAR, TIFF, PDF, with format-specific fields (dimensions, compression, version, …).
 - **Image minimap** — a 256-color thumbnail of PNG / JPEG / BMP images, rendered inline in your terminal.
 - **Markdown mode** — render Markdown with aligned GFM tables and inline image figures instead of a hex dump.
+- **Any-document mode** — `--mode-anydoc` converts PDF, DOCX, XLSX, CSV, EPUB, … to Markdown (via [anydoc](https://crates.io/crates/anydoc)) and renders it like `--markdown` (which is implied).
 - **Pager mode** — page through any output (`--mode-less`) with a built-in `less`-style pager: scroll, search, jump.
 - **Binary-safe** — handles any file type.
 
@@ -26,7 +27,7 @@ A Rust CLI hex-dump utility inspired by UltraEdit's binary viewer. `hhead` shows
 
 ### Prerequisites
 
-- **Rust 1.85+** (the crate targets Rust edition 2024).
+- **Rust 1.88+** (`anydoc`'s MSRV; the crate itself targets edition 2024).
 - A terminal that understands ANSI escapes if you want colors or the minimap.
 
 ### From source
@@ -70,6 +71,7 @@ hhead --input document.pdf --width 32 --bytes 128
 | `--minimap-scale <ROWSxCOLS>` | Thumbnail grid size, e.g. `8x12` | `8x12` |
 | `--markdown` | Render Markdown input instead of a hex dump (aligned tables; figures as minimaps) | off |
 | `--mode-less` | Page through the output interactively, like `less` (works with the other options; the `--bytes` limit does not apply) | off |
+| `--mode-anydoc` | Convert the input to Markdown first (via `anydoc`), then render it like `--markdown` (which is implied) | off |
 
 Full help:
 
@@ -151,6 +153,21 @@ Renders the whole file instead of a hex dump (the `--bytes` limit does not apply
 ```
 
 A lone `![alt](image.png)` line is drawn as a 256-color minimap on the `--minimap-scale` grid, resolved relative to the Markdown file. Remote (`http(s)://`) and undecodable images fall back to a one-line placeholder.
+
+### Any-document mode
+
+```bash
+hhead --input report.docx --mode-anydoc --color
+hhead --input data.csv --mode-anydoc --mode-less   # page the converted table
+```
+
+`--mode-anydoc` converts the input to Markdown with [anydoc](https://crates.io/crates/anydoc)
+(PDF, DOCX/ODT, PPTX, XLSX/XLS, ODS, RTF, EPUB, CSV, …) and then renders it
+exactly like `--markdown`, which is implied — the whole file is converted, so
+the `--bytes` limit does not apply, and `--mode-less` pages the result. If
+`anydoc` cannot convert the file, `hhead` warns on stderr and falls back:
+text input (e.g. already-Markdown files) is rendered as Markdown, anything
+else is shown as a hex dump.
 
 ### Pager mode
 

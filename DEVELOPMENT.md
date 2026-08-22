@@ -4,7 +4,7 @@ This document is for contributors. For end-user installation and usage, see [Rea
 
 ## Prerequisites
 
-- **Rust 1.85+** — the crate is on `edition = "2024"`. Install via [rustup](https://rustup.rs/).
+- **Rust 1.88+** — `anydoc`'s MSRV (the crate itself is on `edition = "2024"`). Install via [rustup](https://rustup.rs/).
 - `cargo` (ships with rustup).
 - A Unix-like OS is recommended; the crate also builds on Windows but permission formatting differs.
 
@@ -40,7 +40,7 @@ cargo check
 cargo run -- --input Cargo.toml --meta --width 32
 ```
 
-The test suite currently covers 64 unit tests (format detection, metadata extraction, hex formatting, Markdown rendering, color palette, argument parsing, pager helpers) and 14 integration tests that drive the CLI end-to-end via `assert_cmd`.
+The test suite currently covers 64 unit tests (format detection, metadata extraction, hex formatting, Markdown rendering, color palette, argument parsing, pager helpers) and 18 integration tests that drive the CLI end-to-end via `assert_cmd`.
 
 ## Project layout
 
@@ -101,6 +101,7 @@ Design notes:
 - **`display::hex::write_hex`** takes `&mut impl Write`, so tests capture output into a `Vec<u8>` and assert on the exact bytes. `display_hex` is a thin wrapper that locks `stdout` once for atomic output. When adding new display functions, follow the same pattern.
 - **No panics on malformed input.** Format parsers must bounds-check every index. Use explicit length guards *and* identity checks (e.g. confirm chunk tags) before reading structured fields.
 - **The pager (`display::pager`)** owns the only terminal I/O beyond plain stdout: raw mode + alternate screen via `crossterm` (added for this feature; it is the one place a terminal library is justified). Pure helpers (`visible_width`, `truncate_ansi`, `find_matches`, `clamp_offset`) are separated out and unit-tested. When stdin/stdout is not a TTY, `run_pager` falls back to dumping the content so piped use stays deterministic.
+- **`--mode-anydoc`** is thin glue in `main.rs`: `markdown_source` runs `anydoc::to_markdown_bytes` (content detection with extension fallback for CSV) and hands the result to the same `write_markdown` renderer `--markdown` uses. On conversion failure it warns and falls back — text input renders as Markdown, anything else as a hex dump. `anydoc`'s conversion needs the `log` facade, which is a no-op without a logger; no logging setup is required.
 
 ## Adding a new file-format parser
 
@@ -116,7 +117,7 @@ Design notes:
 - **Lints.** `cargo clippy --all-targets` should be clean; prefer fixing over `#[allow]` unless the warning is spurious.
 - **Comments.** Only when the *why* is non-obvious — a subtle invariant, a spec quirk, a workaround. Identifiers describe the *what*.
 - **Errors.** Use `io::Result` at I/O boundaries; `io::Error::other(msg)` to wrap foreign errors rather than `io::Error::new(ErrorKind::Other, …)`.
-- **No new dependencies** without a reason. The current deps are `clap`, `colored`, `image`, and `crossterm` (interactive pager); additions should be discussed in the PR.
+- **No new dependencies** without a reason. The current deps are `clap`, `colored`, `image`, `crossterm` (interactive pager), and `anydoc` (`--mode-anydoc` document conversion); additions should be discussed in the PR.
 
 ## Running the binary locally
 
@@ -166,3 +167,4 @@ strip target/release/hhead
 - Only PNG / JPEG / BMP / GIF metadata currently has round-trip unit tests; parsers for ZIP / GZIP / TAR / TIFF / PDF would benefit from fixture-based tests too.
 - The pager's search is line-based and case-insensitive with no match highlighting, and the pager loop itself has no unit tests (only the pure helpers do) — exercising it needs a pty harness.
 - `--mode-less` reads the whole file into memory to page it; hex-dumping a multi-GB file through the pager is therefore memory-hungry (the output buffer is ~4.5× the input).
+- `anydoc` pulls a heavy dependency tree (calamine, pdf-inspector, …), which noticeably lengthens first builds and raises the MSRV to 1.88. The `--mode-anydoc` fallback heuristic is intentionally simple: valid-UTF-8 input that `anydoc` rejects is treated as Markdown.

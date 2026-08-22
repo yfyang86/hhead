@@ -44,6 +44,12 @@ pub struct Args {
     /// (works with the other display options; the `--bytes` limit does not apply)
     #[arg(long, default_value_t = false)]
     pub mode_less: bool,
+
+    /// Convert the input to Markdown first (via `anydoc`) and render it like
+    /// `--markdown` (which is implied). Text that `anydoc` cannot convert is
+    /// rendered as Markdown; other inputs fall back to the hex dump.
+    #[arg(long, default_value_t = false)]
+    pub mode_anydoc: bool,
 }
 
 impl Args {

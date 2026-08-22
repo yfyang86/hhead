@@ -4,8 +4,8 @@ use std::path::Path;
 
 use hhead::cli::Args;
 use hhead::display::{
-    display_hex, display_markdown, display_minimap, print_metadata, run_pager, write_hex,
-    write_markdown, write_metadata, write_minimap,
+    display_hex, display_minimap, print_metadata, run_pager, write_hex, write_markdown,
+    write_metadata, write_minimap,
 };
 use hhead::io::read_file;
 use hhead::utils::parsing::parse_scale;
@@ -54,20 +54,27 @@ fn main() -> std::io::Result<()> {
         }
     }
 
-    // Markdown mode renders the document instead of the hex dump.
-    if args.markdown {
+    // Document rendering: `--markdown` renders the file itself; `--mode-anydoc`
+    // converts it to Markdown first (so the `--markdown` renderer is implied).
+    if args.markdown || args.mode_anydoc {
         let (rows, cols) = minimap_scale(&args.minimap_scale);
-        if args.mode_less {
-            return run_less(path, &args, rows, cols, true);
+        if let Some(md) = markdown_source(path, args.mode_anydoc)? {
+            if args.mode_less {
+                return run_less(path, &args, rows, cols, Some(&md));
+            }
+            let stdout = std::io::stdout();
+            let mut out = stdout.lock();
+            return write_markdown(&mut out, &md, path.parent(), args.color, rows, cols);
         }
-        return display_markdown(path, args.color, rows, cols);
+        // anydoc could not convert and the input isn't text: fall through to
+        // the hex dump below.
     }
 
     // Pager mode pages through the whole hex dump (the --bytes cap does not
     // apply: a pager exists precisely to move through the file).
     if args.mode_less {
         let (rows, cols) = minimap_scale(&args.minimap_scale);
-        return run_less(path, &args, rows, cols, false);
+        return run_less(path, &args, rows, cols, None);
     }
 
     // Read file
@@ -93,14 +100,49 @@ fn minimap_scale(scale: &str) -> (usize, usize) {
     }
 }
 
+/// Bytes to feed the Markdown renderer: the file itself for `--markdown`, or
+/// `anydoc`'s conversion for `--mode-anydoc`.
+///
+/// For `--mode-anydoc`, `None` means conversion failed and the input isn't
+/// text either, so the caller falls back to the hex dump.
+fn markdown_source(path: &Path, convert: bool) -> std::io::Result<Option<Vec<u8>>> {
+    if !convert {
+        return std::fs::read(path).map(Some);
+    }
+
+    let bytes = std::fs::read(path)?;
+    // The extension names signature-less formats (CSV); `None` falls back to
+    // content detection inside anydoc.
+    let format = anydoc::Format::from_path(path);
+    match anydoc::to_markdown_bytes(&bytes, format) {
+        Ok(md) => Ok(Some(md.into_bytes())),
+        Err(e) => {
+            eprintln!("Warning: anydoc conversion failed: {}", e);
+            // Unrecognized or unconvertible input. Text (e.g. already
+            // Markdown) still renders as Markdown; anything else falls back
+            // to the hex dump.
+            if !bytes.is_empty() && std::str::from_utf8(&bytes).is_ok() {
+                Ok(Some(bytes))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+}
+
 /// Render the full output (metadata + minimap + Markdown or hex) into a
 /// buffer and page through it interactively with the built-in pager.
+///
+/// `markdown` is `Some(bytes)` to render as Markdown (already converted when
+/// `--mode-anydoc` is in play) or `None` for a plain hex dump of the whole
+/// file — the pager's job is to move through it, so the `--bytes` limit does
+/// not apply (mirroring Markdown mode).
 fn run_less(
     path: &Path,
     args: &Args,
     rows: usize,
     cols: usize,
-    markdown: bool,
+    markdown: Option<&[u8]>,
 ) -> std::io::Result<()> {
     let mut buf = Vec::new();
 
@@ -117,14 +159,12 @@ fn run_less(
         }
     }
 
-    if markdown {
-        let data = std::fs::read(path)?;
-        write_markdown(&mut buf, &data, path.parent(), args.color, rows, cols)?;
-    } else {
-        // Read the whole file: the pager's job is to move through it, so the
-        // --bytes limit does not apply (mirroring Markdown mode).
-        let data = std::fs::read(path)?;
-        write_hex(&mut buf, &data, args.width, args.color, args.utf8)?;
+    match markdown {
+        Some(md) => write_markdown(&mut buf, md, path.parent(), args.color, rows, cols)?,
+        None => {
+            let data = std::fs::read(path)?;
+            write_hex(&mut buf, &data, args.width, args.color, args.utf8)?;
+        }
     }
 
     let content = String::from_utf8_lossy(&buf);

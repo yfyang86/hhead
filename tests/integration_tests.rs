@@ -261,3 +261,94 @@ fn test_cli_mode_less_with_meta_and_markdown() -> Result<(), Box<dyn std::error:
 
     Ok(())
 }
+
+#[test]
+fn test_cli_mode_anydoc_converts_csv_to_markdown() -> Result<(), Box<dyn std::error::Error>> {
+    // anydoc turns a CSV into a GFM table; --markdown rendering is implied,
+    // so no hex dump is produced. CSV carries no signature, so the file needs
+    // a .csv extension for anydoc to name the format.
+    let mut temp_file = tempfile::Builder::new().suffix(".csv").tempfile()?;
+    temp_file.write_all(b"name,count\napple,3\nbanana,5\n")?;
+
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input")
+        .arg(temp_file.path())
+        .arg("--mode-anydoc");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("| name"))
+        .stdout(predicate::str::contains("| count |"))
+        .stdout(predicate::str::contains("banana"))
+        .stdout(predicate::str::contains("00000000:").not());
+
+    Ok(())
+}
+
+#[test]
+fn test_cli_mode_anydoc_text_falls_back_to_markdown() -> Result<(), Box<dyn std::error::Error>> {
+    // anydoc can't convert plain Markdown, so the input is rendered as
+    // Markdown instead of falling back to the hex dump.
+    let mut temp_file = NamedTempFile::new()?;
+    temp_file.write_all(b"# Doc\n\n| a | b |\n|---|---|\n| 1 | 2 |\n")?;
+
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input")
+        .arg(temp_file.path())
+        .arg("--mode-anydoc");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("Doc"))
+        .stdout(predicate::str::contains("| a | b |"))
+        .stdout(predicate::str::contains("00000000:").not());
+
+    Ok(())
+}
+
+#[test]
+fn test_cli_mode_anydoc_binary_falls_back_to_hex() -> Result<(), Box<dyn std::error::Error>> {
+    // A binary anydoc can't convert (and that isn't text) falls back to the
+    // hex dump.
+    let mut temp_file = NamedTempFile::new()?;
+    let png_data = [
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, // IHDR chunk length
+        0x49, 0x48, 0x44, 0x52, // IHDR type
+        0x00, 0x00, 0x00, 0x01, // width
+        0x00, 0x00, 0x00, 0x01, // height
+        0x08, 0x02, 0x00, 0x00, 0x00, // bit depth, color type, etc.
+        0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82, // IEND
+    ];
+    temp_file.write_all(&png_data)?;
+
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input")
+        .arg(temp_file.path())
+        .arg("--mode-anydoc");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("00000000:"))
+        .stderr(predicate::str::contains("anydoc conversion failed"));
+
+    Ok(())
+}
+
+#[test]
+fn test_cli_mode_anydoc_with_mode_less() -> Result<(), Box<dyn std::error::Error>> {
+    // --mode-anydoc pages the converted Markdown when combined with
+    // --mode-less (piped stdio falls back to a full dump).
+    let mut temp_file = tempfile::Builder::new().suffix(".csv").tempfile()?;
+    temp_file.write_all(b"name,count\napple,3\nbanana,5\n")?;
+
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input")
+        .arg(temp_file.path())
+        .arg("--mode-anydoc")
+        .arg("--mode-less");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("| name"))
+        .stdout(predicate::str::contains("banana"))
+        .stdout(predicate::str::contains("00000000:").not());
+
+    Ok(())
+}
