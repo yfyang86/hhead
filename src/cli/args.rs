@@ -39,6 +39,11 @@ pub struct Args {
     /// Render input as Markdown instead of a hex dump (figures use the minimap renderer)
     #[arg(long, default_value_t = false)]
     pub markdown: bool,
+
+    /// Page through the output interactively, like `less`
+    /// (works with the other display options; the `--bytes` limit does not apply)
+    #[arg(long, default_value_t = false)]
+    pub mode_less: bool,
 }
 
 impl Args {

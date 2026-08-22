@@ -40,7 +40,7 @@ cargo check
 cargo run -- --input Cargo.toml --meta --width 32
 ```
 
-The test suite currently covers 55 unit tests (format detection, metadata extraction, hex formatting, Markdown rendering, color palette, argument parsing) and 12 integration tests that drive the CLI end-to-end via `assert_cmd`.
+The test suite currently covers 64 unit tests (format detection, metadata extraction, hex formatting, Markdown rendering, color palette, argument parsing, pager helpers) and 14 integration tests that drive the CLI end-to-end via `assert_cmd`.
 
 ## Project layout
 
@@ -68,8 +68,9 @@ hhead/
 │   │   ├── mod.rs
 │   │   ├── hex.rs              # `display_hex` / `write_hex<W: Write>`
 │   │   ├── markdown.rs         # `display_markdown` / `write_markdown<W: Write>` terminal renderer
-│   │   ├── metadata.rs         # `print_metadata`
-│   │   └── minimap.rs          # 256-color image thumbnail renderer
+│   │   ├── metadata.rs         # `print_metadata` / `write_metadata<W: Write>`
+│   │   ├── minimap.rs          # 256-color image thumbnail renderer
+│   │   └── pager.rs            # `run_pager`: built-in less-style pager + pure helpers
 │   └── utils/
 │       ├── mod.rs
 │       ├── color.rs            # RGB → xterm-256 palette index
@@ -99,6 +100,7 @@ Design notes:
 - **I/O at the edges.** Format parsers (`formats/`) take a `&[u8]` so they're trivially testable without touching the filesystem.
 - **`display::hex::write_hex`** takes `&mut impl Write`, so tests capture output into a `Vec<u8>` and assert on the exact bytes. `display_hex` is a thin wrapper that locks `stdout` once for atomic output. When adding new display functions, follow the same pattern.
 - **No panics on malformed input.** Format parsers must bounds-check every index. Use explicit length guards *and* identity checks (e.g. confirm chunk tags) before reading structured fields.
+- **The pager (`display::pager`)** owns the only terminal I/O beyond plain stdout: raw mode + alternate screen via `crossterm` (added for this feature; it is the one place a terminal library is justified). Pure helpers (`visible_width`, `truncate_ansi`, `find_matches`, `clamp_offset`) are separated out and unit-tested. When stdin/stdout is not a TTY, `run_pager` falls back to dumping the content so piped use stays deterministic.
 
 ## Adding a new file-format parser
 
@@ -114,7 +116,7 @@ Design notes:
 - **Lints.** `cargo clippy --all-targets` should be clean; prefer fixing over `#[allow]` unless the warning is spurious.
 - **Comments.** Only when the *why* is non-obvious — a subtle invariant, a spec quirk, a workaround. Identifiers describe the *what*.
 - **Errors.** Use `io::Result` at I/O boundaries; `io::Error::other(msg)` to wrap foreign errors rather than `io::Error::new(ErrorKind::Other, …)`.
-- **No new dependencies** without a reason. The current deps are `clap`, `colored`, and `image`; additions should be discussed in the PR.
+- **No new dependencies** without a reason. The current deps are `clap`, `colored`, `image`, and `crossterm` (interactive pager); additions should be discussed in the PR.
 
 ## Running the binary locally
 
@@ -130,6 +132,9 @@ cargo run -- --input assets/main.gif --minimap --minimap-scale 16x40
 
 # render markdown (tables aligned, figures drawn as minimaps)
 cargo run -- --input Readme.md --markdown --color
+
+# page through a big file
+cargo run -- --input Cargo.toml --mode-less --color --meta
 ```
 
 ## Release build
@@ -159,3 +164,5 @@ strip target/release/hhead
 - UTF-8 character column in `display::hex` doesn't account for terminal cell width of CJK / emoji characters — alignment drifts in that case. Fix ideas: integrate `unicode-width`, or chunk along char boundaries.
 - `detect_file_format` returns a stringly-typed tag consumed by `extract_format_metadata`. Converting it into an `enum FileFormat { … }` would remove the string coupling between the two modules.
 - Only PNG / JPEG / BMP / GIF metadata currently has round-trip unit tests; parsers for ZIP / GZIP / TAR / TIFF / PDF would benefit from fixture-based tests too.
+- The pager's search is line-based and case-insensitive with no match highlighting, and the pager loop itself has no unit tests (only the pure helpers do) — exercising it needs a pty harness.
+- `--mode-less` reads the whole file into memory to page it; hex-dumping a multi-GB file through the pager is therefore memory-hungry (the output buffer is ~4.5× the input).

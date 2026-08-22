@@ -200,3 +200,64 @@ fn test_cli_png_metadata() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+#[test]
+fn test_cli_mode_less_pages_whole_file_when_not_a_tty() -> Result<(), Box<dyn std::error::Error>> {
+    // With piped stdio there is no terminal to page on, so --mode-less must
+    // fall back to dumping the whole output — and, like a real pager, the
+    // default --bytes cap (256) must not apply. The fixture is 500 lines of
+    // 22 bytes + a 13-byte marker = 11013 bytes, so the final hex row starts
+    // at 0x2b00; the marker text itself is split across two rows in the
+    // ASCII column, so assert on a contiguous fragment instead.
+    let mut temp_file = NamedTempFile::new()?;
+    let mut content = String::new();
+    for i in 0..500 {
+        content.push_str(&format!("line {i:04} of the file\n"));
+    }
+    content.push_str("# END MARKER\n");
+    temp_file.write_all(content.as_bytes())?;
+
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input").arg(temp_file.path()).arg("--mode-less");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("line 0000"))
+        .stdout(predicate::str::contains("00002b00:"))
+        .stdout(predicate::str::contains("# END MA"));
+
+    // The pager must respect the other options too: page the hex dump at the
+    // requested width.
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input")
+        .arg(temp_file.path())
+        .arg("--mode-less")
+        .arg("--width")
+        .arg("16");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("00000000:"))
+        .stdout(predicate::str::contains("00002b00:"));
+
+    Ok(())
+}
+
+#[test]
+fn test_cli_mode_less_with_meta_and_markdown() -> Result<(), Box<dyn std::error::Error>> {
+    let mut temp_file = NamedTempFile::new()?;
+    temp_file.write_all(b"# Doc\n\n| a | b |\n|---|---|\n| 1 | 2 |\n")?;
+
+    // --mode-less combines with --markdown and --meta.
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input")
+        .arg(temp_file.path())
+        .arg("--mode-less")
+        .arg("--markdown")
+        .arg("--meta");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("File:"))
+        .stdout(predicate::str::contains("| a | b |"))
+        .stdout(predicate::str::contains("00000000:").not());
+
+    Ok(())
+}

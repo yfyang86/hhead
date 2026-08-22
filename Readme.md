@@ -19,6 +19,7 @@ A Rust CLI hex-dump utility inspired by UltraEdit's binary viewer. `hhead` shows
 - **Format detection** — PNG, JPEG, GIF, BMP, ZIP, GZIP, TAR, TIFF, PDF, with format-specific fields (dimensions, compression, version, …).
 - **Image minimap** — a 256-color thumbnail of PNG / JPEG / BMP images, rendered inline in your terminal.
 - **Markdown mode** — render Markdown with aligned GFM tables and inline image figures instead of a hex dump.
+- **Pager mode** — page through any output (`--mode-less`) with a built-in `less`-style pager: scroll, search, jump.
 - **Binary-safe** — handles any file type.
 
 ## Installation
@@ -68,6 +69,7 @@ hhead --input document.pdf --width 32 --bytes 128
 | `--minimap` | Render a 256-color thumbnail of image input | off |
 | `--minimap-scale <ROWSxCOLS>` | Thumbnail grid size, e.g. `8x12` | `8x12` |
 | `--markdown` | Render Markdown input instead of a hex dump (aligned tables; figures as minimaps) | off |
+| `--mode-less` | Page through the output interactively, like `less` (works with the other options; the `--bytes` limit does not apply) | off |
 
 Full help:
 
@@ -149,6 +151,31 @@ Renders the whole file instead of a hex dump (the `--bytes` limit does not apply
 ```
 
 A lone `![alt](image.png)` line is drawn as a 256-color minimap on the `--minimap-scale` grid, resolved relative to the Markdown file. Remote (`http(s)://`) and undecodable images fall back to a one-line placeholder.
+
+### Pager mode
+
+```bash
+hhead --input big.log --mode-less --color --meta
+```
+
+`--mode-less` runs the built-in pager (no external `less` needed) on whatever
+the other options produce — the full hex dump, Markdown render, minimap, or
+metadata block. It reads the whole file, so the `--bytes` limit does not
+apply (like `--markdown`). Keys:
+
+| Key | Action |
+|---|---|
+| `q` / `Esc` | quit |
+| `j` / `↓` / `Enter` | scroll down one line |
+| `k` / `↑` | scroll up one line |
+| `Space` / `f` / `PgDn` | page down |
+| `b` / `PgUp` | page up |
+| `g` / `G` | jump to top / bottom |
+| `/` | search forward (case-insensitive); `Enter` to run, `Esc` to cancel |
+| `n` / `N` | next / previous match |
+
+If stdin or stdout is not a terminal, the pager falls back to dumping the
+whole output, so piping still works.
 
 ### Archive with format metadata
 
