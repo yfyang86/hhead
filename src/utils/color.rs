@@ -63,21 +63,21 @@ mod tests {
         // Pure red should map to RGB cube
         let result = rgb_to_256(255, 0, 0);
         // Should be in RGB cube range (16-231)
-        assert!(result >= 16 && result <= 231);
+        assert!((16..=231).contains(&result));
     }
 
     #[test]
     fn test_rgb_to_256_green() {
         // Pure green should map to RGB cube
         let result = rgb_to_256(0, 255, 0);
-        assert!(result >= 16 && result <= 231);
+        assert!((16..=231).contains(&result));
     }
 
     #[test]
     fn test_rgb_to_256_blue() {
         // Pure blue should map to RGB cube
         let result = rgb_to_256(0, 0, 255);
-        assert!(result >= 16 && result <= 231);
+        assert!((16..=231).contains(&result));
     }
 
     #[test]

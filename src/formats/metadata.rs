@@ -261,12 +261,10 @@ pub fn extract_format_metadata(data: &[u8]) -> Vec<String> {
                 }
             }
         }
-        "PDF" => {
-            if data.len() >= 8 {
-                // PDF version is in bytes 5-7 (e.g., "1.4" or "2.0")
-                let version = String::from_utf8_lossy(&data[5..8]);
-                metadata.push(format!("  Version: {}", version));
-            }
+        "PDF" if data.len() >= 8 => {
+            // PDF version is in bytes 5-7 (e.g., "1.4" or "2.0")
+            let version = String::from_utf8_lossy(&data[5..8]);
+            metadata.push(format!("  Version: {}", version));
         }
         _ => {}
     }
