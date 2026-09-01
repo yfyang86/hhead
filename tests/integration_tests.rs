@@ -406,3 +406,62 @@ fn test_cli_directory_input_with_color() -> Result<(), Box<dyn std::error::Error
 
     Ok(())
 }
+
+#[test]
+fn test_cli_csv_rainbow_colors_columns() -> Result<(), Box<dyn std::error::Error>> {
+    // --csv-rainbow implies color, so ANSI shows up even in a pipe, with
+    // each column in a different color and the layout untouched.
+    let mut temp_file = tempfile::Builder::new().suffix(".csv").tempfile()?;
+    temp_file.write_all(b"name,count\napple,3\nbanana,5\n")?;
+
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input")
+        .arg(temp_file.path())
+        .arg("--csv-rainbow");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("\x1b[36mname\x1b[0m,"))
+        .stdout(predicate::str::contains(",\x1b[33mcount\x1b[0m"))
+        .stdout(predicate::str::contains("apple"))
+        .stdout(predicate::str::contains("00000000:").not());
+
+    Ok(())
+}
+
+#[test]
+fn test_cli_csv_rainbow_markdown_table() -> Result<(), Box<dyn std::error::Error>> {
+    // With --markdown, table columns get the rainbow palette.
+    let mut temp_file = NamedTempFile::new()?;
+    temp_file.write_all(b"| Name | Age |\n| ---- | --- |\n| Al | 9 |\n")?;
+
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input")
+        .arg(temp_file.path())
+        .arg("--markdown")
+        .arg("--csv-rainbow");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("\x1b[36m"))
+        .stdout(predicate::str::contains("\x1b[33m"))
+        .stdout(predicate::str::contains("Al"));
+
+    Ok(())
+}
+
+#[test]
+fn test_cli_csv_rainbow_binary_falls_back_to_hex() -> Result<(), Box<dyn std::error::Error>> {
+    // Non-UTF-8 input warns and falls back to the hex dump.
+    let mut temp_file = NamedTempFile::new()?;
+    temp_file.write_all(&[0x00, 0xFF, 0xFE, 0x01])?;
+
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input")
+        .arg(temp_file.path())
+        .arg("--csv-rainbow");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("00000000:"))
+        .stderr(predicate::str::contains("UTF-8"));
+
+    Ok(())
+}

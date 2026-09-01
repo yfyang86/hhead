@@ -51,6 +51,13 @@ pub struct Args {
     /// rendered as Markdown; other inputs fall back to the hex dump.
     #[arg(long, default_value_t = false)]
     pub mode_anydoc: bool,
+
+    /// Rainbow-colorize columns (implies `--color`): CSV/TSV input is
+    /// rendered as text with each column in its own color (the whole file;
+    /// `--bytes` does not apply); with `--markdown` or `--mode-anydoc`,
+    /// table columns are painted with the same palette
+    #[arg(long, default_value_t = false)]
+    pub csv_rainbow: bool,
 }
 
 impl Args {

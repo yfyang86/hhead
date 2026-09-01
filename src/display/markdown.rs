@@ -24,15 +24,28 @@ pub fn display_markdown(
     color: bool,
     img_rows: usize,
     img_cols: usize,
+    rainbow: bool,
 ) -> io::Result<()> {
     let data = std::fs::read(path)?;
     let stdout = io::stdout();
     let mut out = stdout.lock();
-    write_markdown(&mut out, &data, path.parent(), color, img_rows, img_cols)
+    write_markdown(
+        &mut out,
+        &data,
+        path.parent(),
+        color,
+        img_rows,
+        img_cols,
+        rainbow,
+    )
 }
 
 /// Same as [`display_markdown`] but writes to an arbitrary [`Write`] and
 /// takes the already-read bytes. Exposed for testing.
+///
+/// `rainbow` paints table columns with the `--csv-rainbow` palette; cells
+/// are then rendered with inline markers stripped (no nested ANSI), so the
+/// column color runs the full cell.
 pub fn write_markdown<W: Write>(
     out: &mut W,
     data: &[u8],
@@ -40,6 +53,7 @@ pub fn write_markdown<W: Write>(
     color: bool,
     img_rows: usize,
     img_cols: usize,
+    rainbow: bool,
 ) -> io::Result<()> {
     let text = String::from_utf8_lossy(data);
     let lines: Vec<&str> = text.lines().collect();
@@ -83,7 +97,7 @@ pub fn write_markdown<W: Write>(
                 body.push(lines[j]);
                 j += 1;
             }
-            render_table(out, trimmed, lines[i + 1], &body, color)?;
+            render_table(out, trimmed, lines[i + 1], &body, color, rainbow)?;
             i = j;
             continue;
         }
@@ -209,6 +223,7 @@ fn render_table<W: Write>(
     sep_line: &str,
     body_lines: &[&str],
     color: bool,
+    rainbow: bool,
 ) -> io::Result<()> {
     let header = split_row(header_line);
     let body: Vec<Vec<String>> = body_lines.iter().map(|l| split_row(l)).collect();
@@ -231,12 +246,18 @@ fn render_table<W: Write>(
     }
     let aligns = parse_aligns(sep_line, ncols);
 
-    let render_row = |cells: &[String], plain: bool| -> String {
+    let render_row = |cells: &[String], plain: bool, header_row: bool| -> String {
         let mut line = String::from("|");
         for (j, width) in widths.iter().enumerate() {
             let cell = cells.get(j).map(String::as_str).unwrap_or("");
             let plain_len = render_inline(cell, false).chars().count();
-            let rendered = if plain {
+            // Rainbow paints the whole (marker-stripped) cell in its column
+            // color — inline ANSI inside the cell would reset it mid-cell.
+            let rendered = if rainbow {
+                let painted = render_inline(cell, false).color(super::csv::rainbow_color(j));
+                let painted = if header_row { painted.bold() } else { painted };
+                painted.to_string()
+            } else if plain {
                 render_inline(cell, false)
             } else {
                 render_inline(cell, color)
@@ -249,9 +270,14 @@ fn render_table<W: Write>(
     };
 
     // Header cells are rendered plain so the whole line can be bolded
-    // without nested ANSI resets cancelling the style mid-row.
-    let header_out = render_row(&header, true);
-    writeln!(out, "{}", style(&header_out, Style::Bold, color))?;
+    // without nested ANSI resets cancelling the style mid-row; in rainbow
+    // mode each cell is bolded individually inside its column color instead.
+    let header_out = render_row(&header, true, true);
+    if rainbow {
+        writeln!(out, "{}", header_out)?;
+    } else {
+        writeln!(out, "{}", style(&header_out, Style::Bold, color))?;
+    }
 
     let mut divider = String::from("|");
     for width in &widths {
@@ -261,7 +287,7 @@ fn render_table<W: Write>(
     writeln!(out, "{}", divider)?;
 
     for row in &body {
-        writeln!(out, "{}", render_row(row, false))?;
+        writeln!(out, "{}", render_row(row, false, false))?;
     }
     Ok(())
 }
@@ -416,9 +442,30 @@ mod tests {
 
     fn capture(text: &str, color: bool) -> String {
         let mut buf = Vec::new();
-        write_markdown(&mut buf, text.as_bytes(), None, color, 4, 6)
+        write_markdown(&mut buf, text.as_bytes(), None, color, 4, 6, false)
             .expect("write_markdown should not fail");
         String::from_utf8(buf).expect("output should be valid utf-8")
+    }
+
+    #[test]
+    fn test_table_rainbow_columns() {
+        let _guard = crate::COLOR_TEST_LOCK.lock().unwrap();
+        colored::control::set_override(true);
+        let md = "| Name | Age |\n| ---- | --- |\n| Al | 9 |\n";
+        let mut buf = Vec::new();
+        write_markdown(&mut buf, md.as_bytes(), None, false, 4, 6, true)
+            .expect("write_markdown should not fail");
+        colored::control::unset_override();
+        let out = String::from_utf8(buf).unwrap();
+        // Column 0 cyan (36), column 1 yellow (33), in header and body.
+        assert!(out.contains("\x1b[36m"), "cyan column: {out:?}");
+        assert!(out.contains("\x1b[33m"), "yellow column: {out:?}");
+        assert!(out.contains("Al"));
+        // The divider row stays unpainted.
+        assert!(
+            out.lines()
+                .any(|l| l.starts_with("|--") || l.starts_with("|-"))
+        );
     }
 
     #[test]
@@ -535,6 +582,7 @@ mod tests {
             false,
             2,
             2,
+            false,
         )
         .expect("write_markdown should not fail");
         let out = String::from_utf8(buf).expect("output should be valid utf-8");

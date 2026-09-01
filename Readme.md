@@ -22,6 +22,7 @@ A Rust CLI hex-dump utility inspired by UltraEdit's binary viewer. `hhead` shows
 - **Any-document mode** — `--mode-anydoc` converts PDF, DOCX, XLSX, CSV, EPUB, … to Markdown (via [anydoc](https://crates.io/crates/anydoc)) and renders it like `--markdown` (which is implied).
 - **Pager mode** — page through any output (`--mode-less`) with a built-in `less`-style pager: scroll, search, jump.
 - **Directory mode** — point `--input` at a directory to get a `tree`-style listing; `--meta` adds an `ls -lah`/`du -sh`-style block.
+- **Rainbow CSV** — `--csv-rainbow` paints each CSV/TSV column in its own color; with `--markdown` or `--mode-anydoc`, table columns get the same palette.
 - **Binary-safe** — handles any file type.
 
 ## Installation
@@ -73,6 +74,7 @@ hhead --input document.pdf --width 32 --bytes 128
 | `--markdown` | Render Markdown input instead of a hex dump (aligned tables; figures as minimaps) | off |
 | `--mode-less` | Page through the output interactively, like `less` (works with the other options; the `--bytes` limit does not apply) | off |
 | `--mode-anydoc` | Convert the input to Markdown first (via `anydoc`), then render it like `--markdown` (which is implied) | off |
+| `--csv-rainbow` | Paint each CSV/TSV column in its own color (implies `--color`; whole file, `--bytes` does not apply); with `--markdown`/`--mode-anydoc`, table columns get the same palette | off |
 
 Full help:
 
@@ -194,6 +196,24 @@ apply (like `--markdown`). Keys:
 
 If stdin or stdout is not a terminal, the pager falls back to dumping the
 whole output, so piping still works.
+
+### Rainbow CSV
+
+```bash
+hhead --input data.csv --csv-rainbow
+hhead --input report.md --markdown --csv-rainbow   # rainbow table columns
+hhead --input data.xlsx --mode-anydoc --csv-rainbow
+```
+
+`--csv-rainbow` renders CSV/TSV input as text with every column painted in
+its own color (cyan, yellow, green, magenta, blue, red, cycling), leaving
+the layout untouched. Parsing is quote-aware — a quoted field keeps embedded
+delimiters and even line breaks in one field's color — and the delimiter
+(`,`, tab, or `;`) is sniffed from the first line. The flag implies
+`--color`, reads the whole file like Markdown mode, and pages with
+`--mode-less`. Combined with `--markdown` or `--mode-anydoc`, table columns
+are painted with the same palette instead. Non-UTF-8 input falls back to
+the hex dump.
 
 ### Directory tree
 
