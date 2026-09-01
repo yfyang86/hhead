@@ -2,8 +2,15 @@
 name = "hhead"
 version = "0.2.0"
 edition = "2024"
-description = "Hex dump utility with color and UTF-8 support"
+rust-version = "1.88"
+description = "Hex head/dump utility with color, UTF-8 and Markdown/document rendering, image minimaps, directory trees, and a built-in pager"
 authors = ["Martingalefan"]
+license = "MIT"
+readme = "Readme.md"
+repository = "https://github.com/yfyang86/hhead"
+keywords = ["hexdump", "hex", "cli", "markdown", "pager"]
+categories = ["command-line-utilities", "text-processing"]
+exclude = ["wiki/", "assets/", ".gitignore"]
 
 [lib]
 name = "hhead"
