@@ -548,17 +548,19 @@ mod tests {
 
         // A deeply nested chain renders fine (scan and render are both
         // iterative, so depth is bounded by memory, not the call stack).
-        // PATH_MAX caps how deep a test fixture can practically go.
+        // PATH_MAX caps how deep a test fixture can practically go: it is
+        // 1024 bytes on macOS (vs 4096 on Linux), so with 2 bytes per level
+        // plus the tempdir prefix, 300 levels is the safe portable depth.
         let deep = tempdir().expect("tempdir");
         let mut p = deep.path().to_path_buf();
-        for _ in 0..1000 {
+        for _ in 0..300 {
             p.push("d");
             fs::create_dir(&p).unwrap();
         }
         let mut buf = Vec::new();
         write_dir_listing(&mut buf, deep.path(), false, true).unwrap();
         let out = String::from_utf8(buf).unwrap();
-        assert!(out.contains("1000 directories, 0 files"));
+        assert!(out.contains("300 directories, 0 files"));
     }
 
     #[test]
