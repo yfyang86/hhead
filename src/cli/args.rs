@@ -12,7 +12,8 @@ pub struct Args {
     #[arg(long, default_value_t = 256)]
     pub bytes: usize,
 
-    /// Input file
+    /// Input file, or a directory to list as a tree
+    /// (with `--meta`, an `ls -lah`/`du`-style block precedes the tree)
     #[arg(long)]
     pub input: String,
 

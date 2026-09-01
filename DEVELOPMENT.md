@@ -40,7 +40,7 @@ cargo check
 cargo run -- --input Cargo.toml --meta --width 32
 ```
 
-The test suite currently covers 64 unit tests (format detection, metadata extraction, hex formatting, Markdown rendering, color palette, argument parsing, pager helpers) and 18 integration tests that drive the CLI end-to-end via `assert_cmd`.
+The test suite currently covers 71 unit tests (format detection, metadata extraction, hex formatting, Markdown rendering, color palette, argument parsing, pager helpers) and 21 integration tests that drive the CLI end-to-end via `assert_cmd`.
 
 ## Project layout
 
@@ -70,7 +70,8 @@ hhead/
 │   │   ├── markdown.rs         # `display_markdown` / `write_markdown<W: Write>` terminal renderer
 │   │   ├── metadata.rs         # `print_metadata` / `write_metadata<W: Write>`
 │   │   ├── minimap.rs          # 256-color image thumbnail renderer
-│   │   └── pager.rs            # `run_pager`: built-in less-style pager + pure helpers
+│   │   ├── pager.rs            # `run_pager`: built-in less-style pager + pure helpers
+│   │   └── tree.rs             # directory mode: tree listing + ls/du-style meta block
 │   └── utils/
 │       ├── mod.rs
 │       ├── color.rs            # RGB → xterm-256 palette index

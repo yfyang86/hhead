@@ -21,6 +21,7 @@ A Rust CLI hex-dump utility inspired by UltraEdit's binary viewer. `hhead` shows
 - **Markdown mode** — render Markdown with aligned GFM tables and inline image figures instead of a hex dump.
 - **Any-document mode** — `--mode-anydoc` converts PDF, DOCX, XLSX, CSV, EPUB, … to Markdown (via [anydoc](https://crates.io/crates/anydoc)) and renders it like `--markdown` (which is implied).
 - **Pager mode** — page through any output (`--mode-less`) with a built-in `less`-style pager: scroll, search, jump.
+- **Directory mode** — point `--input` at a directory to get a `tree`-style listing; `--meta` adds an `ls -lah`/`du -sh`-style block.
 - **Binary-safe** — handles any file type.
 
 ## Installation
@@ -48,7 +49,7 @@ cargo install --path .
 ## Usage
 
 ```bash
-hhead --input <FILE> [OPTIONS]
+hhead --input <FILE|DIR> [OPTIONS]
 ```
 
 ### Quick start
@@ -61,7 +62,7 @@ hhead --input document.pdf --width 32 --bytes 128
 
 | Option | Description | Default |
 |---|---|---|
-| `--input <FILE>` | Input file path (required) | — |
+| `--input <PATH>` | Input file, or a directory to list as a tree (required) | — |
 | `--width <N>` | Bytes per line in the hex column | `64` |
 | `--bytes <N>` | Maximum number of bytes to read | `256` |
 | `--color` | Colorize offsets and separators | off |
@@ -193,6 +194,40 @@ apply (like `--markdown`). Keys:
 
 If stdin or stdout is not a terminal, the pager falls back to dumping the
 whole output, so piping still works.
+
+### Directory tree
+
+```bash
+hhead --input src --meta --color
+```
+
+When `--input` is a directory, `hhead` lists it as a tree (like `tree`)
+instead of hex-dumping. With `--meta`, the tree is preceded by an
+`ls -lah`-style listing of the directory's entries (mode, human-readable
+size, UTC mtime) and a `du -sh *`-style block of recursive sizes with a
+total. `--color` paints directories blue, symlinks cyan, executables green,
+and sizes yellow; `--mode-less` pages the listing.
+
+```
+Directory: src
+drwxr-xr-x   4.0K Sep  1 08:51 cli
+-rw-r--r--    482 Sep  1 08:48 lib.rs
+...
+
+  2.1K	cli
+   482	lib.rs
+...
+   94K	total
+
+src
+├── cli
+│   ├── args.rs
+│   └── mod.rs
+├── lib.rs
+└── ...
+
+5 directories, 18 files
+```
 
 ### Archive with format metadata
 

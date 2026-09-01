@@ -352,3 +352,57 @@ fn test_cli_mode_anydoc_with_mode_less() -> Result<(), Box<dyn std::error::Error
 
     Ok(())
 }
+
+#[test]
+fn test_cli_directory_input_tree() -> Result<(), Box<dyn std::error::Error>> {
+    // A directory input is listed as a tree instead of hex-dumped.
+    let dir = tempfile::tempdir()?;
+    std::fs::create_dir(dir.path().join("sub"))?;
+    std::fs::write(dir.path().join("alpha.txt"), b"hello")?;
+    std::fs::write(dir.path().join("sub").join("beta.bin"), vec![0u8; 2048])?;
+
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input").arg(dir.path());
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("alpha.txt"))
+        .stdout(predicate::str::contains("└──"))
+        .stdout(predicate::str::contains("1 directories, 2 files"))
+        .stdout(predicate::str::contains("00000000:").not());
+
+    Ok(())
+}
+
+#[test]
+fn test_cli_directory_input_with_meta() -> Result<(), Box<dyn std::error::Error>> {
+    // --meta on a directory prepends an ls -lah / du -sh style block.
+    let dir = tempfile::tempdir()?;
+    std::fs::create_dir(dir.path().join("sub"))?;
+    std::fs::write(dir.path().join("sub").join("beta.bin"), vec![0u8; 2048])?;
+
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input").arg(dir.path()).arg("--meta");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("Directory:"))
+        .stdout(predicate::str::contains("2.0K\tsub"))
+        .stdout(predicate::str::contains("\ttotal"))
+        .stdout(predicate::str::contains("└──"));
+
+    Ok(())
+}
+
+#[test]
+fn test_cli_directory_input_with_color() -> Result<(), Box<dyn std::error::Error>> {
+    // --color forces ANSI escapes even though stdout is piped.
+    let dir = tempfile::tempdir()?;
+    std::fs::create_dir(dir.path().join("sub"))?;
+
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input").arg(dir.path()).arg("--color");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("\x1b["));
+
+    Ok(())
+}

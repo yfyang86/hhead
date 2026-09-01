@@ -4,8 +4,8 @@ use std::path::Path;
 
 use hhead::cli::Args;
 use hhead::display::{
-    display_hex, display_minimap, print_metadata, run_pager, write_hex, write_markdown,
-    write_metadata, write_minimap,
+    display_hex, display_minimap, display_tree, print_metadata, run_pager, write_dir_meta,
+    write_hex, write_markdown, write_metadata, write_minimap, write_tree,
 };
 use hhead::io::read_file;
 use hhead::utils::parsing::parse_scale;
@@ -29,6 +29,22 @@ fn main() -> std::io::Result<()> {
     if !path.exists() {
         eprintln!("Error: File '{}' not found", args.input);
         std::process::exit(1);
+    }
+
+    // Directory input: list it as a tree instead of hex-dumping. `--meta`
+    // prepends an `ls -lah`/`du`-style block; `--color` paints entry names
+    // by type; the other display modes don't apply to directories.
+    if path.is_dir() {
+        if args.mode_less {
+            let mut buf = Vec::new();
+            if args.meta {
+                write_dir_meta(&mut buf, path, args.color)?;
+            }
+            write_tree(&mut buf, path, args.color)?;
+            let content = String::from_utf8_lossy(&buf);
+            return run_pager(&content, &args.input);
+        }
+        return display_tree(path, args.color, args.meta);
     }
 
     // Print metadata if requested
