@@ -12,4 +12,4 @@ pub use markdown::{display_markdown, write_markdown};
 pub use metadata::{print_metadata, write_metadata};
 pub use minimap::{display_minimap, write_minimap};
 pub use pager::run_pager;
-pub use tree::{display_tree, write_dir_meta, write_tree};
+pub use tree::{display_tree, write_dir_listing, write_dir_meta, write_tree};
