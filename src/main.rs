@@ -4,8 +4,8 @@ use std::path::Path;
 
 use hhead::cli::Args;
 use hhead::display::{
-    display_hex, display_minimap, display_tree, print_metadata, run_pager, write_dir_meta,
-    write_hex, write_markdown, write_metadata, write_minimap, write_tree,
+    display_hex, display_minimap, display_tree, print_metadata, run_pager, write_dir_listing,
+    write_hex, write_markdown, write_metadata, write_minimap,
 };
 use hhead::io::read_file;
 use hhead::utils::parsing::parse_scale;
@@ -37,10 +37,7 @@ fn main() -> std::io::Result<()> {
     if path.is_dir() {
         if args.mode_less {
             let mut buf = Vec::new();
-            if args.meta {
-                write_dir_meta(&mut buf, path, args.color)?;
-            }
-            write_tree(&mut buf, path, args.color)?;
+            write_dir_listing(&mut buf, path, args.color, args.meta)?;
             let content = String::from_utf8_lossy(&buf);
             return run_pager(&content, &args.input);
         }

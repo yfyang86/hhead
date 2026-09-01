@@ -367,7 +367,7 @@ fn test_cli_directory_input_tree() -> Result<(), Box<dyn std::error::Error>> {
         .success()
         .stdout(predicate::str::contains("alpha.txt"))
         .stdout(predicate::str::contains("└──"))
-        .stdout(predicate::str::contains("1 directories, 2 files"))
+        .stdout(predicate::str::contains("1 directory, 2 files"))
         .stdout(predicate::str::contains("00000000:").not());
 
     Ok(())

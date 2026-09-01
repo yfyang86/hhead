@@ -1,6 +1,6 @@
 [package]
 name = "hhead"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Hex dump utility with color and UTF-8 support"
 authors = ["Martingalefan"]
