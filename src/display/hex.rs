@@ -43,14 +43,21 @@ pub fn write_hex<W: Write>(
     // Pick an offset width wide enough for the largest offset we'll print.
     // Default to 8 hex digits; grow to 16 for >4GiB inputs.
     let max_offset = data.len().saturating_sub(1);
-    let offset_width = if max_offset > u32::MAX as usize { 16 } else { 8 };
+    let offset_width = if max_offset > u32::MAX as usize {
+        16
+    } else {
+        8
+    };
 
     for (i, chunk) in data.chunks(width).enumerate() {
         let offset = i * width;
         write!(
             out,
             "{}:",
-            colorize(&format!("{:0width$x}", offset, width = offset_width), Color::Cyan)
+            colorize(
+                &format!("{:0width$x}", offset, width = offset_width),
+                Color::Cyan
+            )
         )?;
 
         for group in 0..num_groups {
@@ -85,7 +92,13 @@ pub fn write_hex<W: Write>(
         } else {
             chunk
                 .iter()
-                .map(|&b| if (32..=126).contains(&b) { b as char } else { '.' })
+                .map(|&b| {
+                    if (32..=126).contains(&b) {
+                        b as char
+                    } else {
+                        '.'
+                    }
+                })
                 .collect()
         };
         let repr_len = repr.chars().count();
@@ -113,7 +126,10 @@ mod tests {
         let out = capture(b"Hello, World!", 16, false, false);
         assert!(out.starts_with("00000000:"), "offset header missing: {out}");
         assert!(out.contains(" 48 65 6c 6c 6f"), "hex bytes missing: {out}");
-        assert!(out.contains("|Hello, World!"), "ascii column missing: {out}");
+        assert!(
+            out.contains("|Hello, World!"),
+            "ascii column missing: {out}"
+        );
     }
 
     #[test]
@@ -138,10 +154,14 @@ mod tests {
     fn test_display_hex_color_contains_ansi() {
         // The `colored` crate auto-disables ANSI for non-TTY writers; override it
         // so this test sees escape sequences regardless of how cargo captures stdio.
+        let _guard = crate::COLOR_TEST_LOCK.lock().unwrap();
         colored::control::set_override(true);
         let out = capture(b"Test", 16, true, false);
         colored::control::unset_override();
-        assert!(out.contains("\x1b["), "colored output should contain ANSI escape: {out}");
+        assert!(
+            out.contains("\x1b["),
+            "colored output should contain ANSI escape: {out}"
+        );
     }
 
     #[test]

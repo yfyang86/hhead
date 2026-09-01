@@ -1,12 +1,12 @@
 //! Metadata display functionality
 
-use std::fs;
-use std::io;
-use std::io::Read;
-use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 use crate::formats::detection::detect_file_format;
 use crate::formats::metadata::extract_format_metadata;
+use std::fs;
+use std::io;
+use std::io::{Read, Write};
+use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn format_system_time(t: io::Result<SystemTime>) -> String {
     match t {
@@ -26,7 +26,11 @@ fn format_permissions(perm: &fs::Permissions) -> String {
 
 #[cfg(not(unix))]
 fn format_permissions(perm: &fs::Permissions) -> String {
-    if perm.readonly() { "read-only".to_string() } else { "read-write".to_string() }
+    if perm.readonly() {
+        "read-only".to_string()
+    } else {
+        "read-write".to_string()
+    }
 }
 
 /// Print file metadata including format information
@@ -37,13 +41,25 @@ fn format_permissions(perm: &fs::Permissions) -> String {
 /// # Returns
 /// `io::Result<()>` - Ok on success, Err on I/O error
 pub fn print_metadata(path: &Path) -> io::Result<()> {
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    write_metadata(&mut out, path)
+}
+
+/// Same as [`print_metadata`] but writes to an arbitrary [`Write`]. Exposed
+/// for testing and so the pager can capture the metadata block.
+pub fn write_metadata<W: Write>(out: &mut W, path: &Path) -> io::Result<()> {
     let metadata = fs::metadata(path)?;
-    println!("File: {}", path.display());
-    println!("Size: {} bytes", metadata.len());
-    println!("Created: {}", format_system_time(metadata.created()));
-    println!("Modified: {}", format_system_time(metadata.modified()));
-    println!("Accessed: {}", format_system_time(metadata.accessed()));
-    println!("Permissions: {}", format_permissions(&metadata.permissions()));
+    writeln!(out, "File: {}", path.display())?;
+    writeln!(out, "Size: {} bytes", metadata.len())?;
+    writeln!(out, "Created: {}", format_system_time(metadata.created()))?;
+    writeln!(out, "Modified: {}", format_system_time(metadata.modified()))?;
+    writeln!(out, "Accessed: {}", format_system_time(metadata.accessed()))?;
+    writeln!(
+        out,
+        "Permissions: {}",
+        format_permissions(&metadata.permissions())
+    )?;
 
     // Read first 1024 bytes for format detection
     let mut file = fs::File::open(path)?;
@@ -53,17 +69,17 @@ pub fn print_metadata(path: &Path) -> io::Result<()> {
     if bytes_read > 0 {
         let format_info = detect_file_format(&buffer[..bytes_read]);
         if !format_info.is_empty() {
-            println!("Format: {}", format_info);
+            writeln!(out, "Format: {}", format_info)?;
         }
 
         // Extract additional format-specific metadata
         let additional_meta = extract_format_metadata(&buffer[..bytes_read]);
         for line in additional_meta {
-            println!("{}", line);
+            writeln!(out, "{}", line)?;
         }
     }
 
-    println!();
+    writeln!(out)?;
     Ok(())
 }
 

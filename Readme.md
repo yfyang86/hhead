@@ -18,13 +18,17 @@ A Rust CLI hex-dump utility inspired by UltraEdit's binary viewer. `hhead` shows
 - **File metadata** — size, timestamps, permissions.
 - **Format detection** — PNG, JPEG, GIF, BMP, ZIP, GZIP, TAR, TIFF, PDF, with format-specific fields (dimensions, compression, version, …).
 - **Image minimap** — a 256-color thumbnail of PNG / JPEG / BMP images, rendered inline in your terminal.
+- **Markdown mode** — render Markdown with aligned GFM tables and inline image figures instead of a hex dump.
+- **Any-document mode** — `--mode-anydoc` converts PDF, DOCX, XLSX, CSV, EPUB, … to Markdown (via [anydoc](https://crates.io/crates/anydoc)) and renders it like `--markdown` (which is implied).
+- **Pager mode** — page through any output (`--mode-less`) with a built-in `less`-style pager: scroll, search, jump.
+- **Directory mode** — point `--input` at a directory to get a `tree`-style listing; `--meta` adds an `ls -lah`/`du -sh`-style block.
 - **Binary-safe** — handles any file type.
 
 ## Installation
 
 ### Prerequisites
 
-- **Rust 1.85+** (the crate targets Rust edition 2024).
+- **Rust 1.88+** (`anydoc`'s MSRV; the crate itself targets edition 2024).
 - A terminal that understands ANSI escapes if you want colors or the minimap.
 
 ### From source
@@ -45,7 +49,7 @@ cargo install --path .
 ## Usage
 
 ```bash
-hhead --input <FILE> [OPTIONS]
+hhead --input <FILE|DIR> [OPTIONS]
 ```
 
 ### Quick start
@@ -58,7 +62,7 @@ hhead --input document.pdf --width 32 --bytes 128
 
 | Option | Description | Default |
 |---|---|---|
-| `--input <FILE>` | Input file path (required) | — |
+| `--input <PATH>` | Input file, or a directory to list as a tree (required) | — |
 | `--width <N>` | Bytes per line in the hex column | `64` |
 | `--bytes <N>` | Maximum number of bytes to read | `256` |
 | `--color` | Colorize offsets and separators | off |
@@ -66,6 +70,9 @@ hhead --input document.pdf --width 32 --bytes 128
 | `--utf8` | Decode the character column as UTF-8 | off |
 | `--minimap` | Render a 256-color thumbnail of image input | off |
 | `--minimap-scale <ROWSxCOLS>` | Thumbnail grid size, e.g. `8x12` | `8x12` |
+| `--markdown` | Render Markdown input instead of a hex dump (aligned tables; figures as minimaps) | off |
+| `--mode-less` | Page through the output interactively, like `less` (works with the other options; the `--bytes` limit does not apply) | off |
+| `--mode-anydoc` | Convert the input to Markdown first (via `anydoc`), then render it like `--markdown` (which is implied) | off |
 
 Full help:
 
@@ -130,6 +137,97 @@ hhead --input test/demo.gif --minimap --minimap-scale 32x64 --width 32 --color -
 ```
 
 Renders a 32×64 grid of 256-color blocks sampled from the image, followed by the usual metadata and hex dump.
+
+### Markdown rendering
+
+```bash
+hhead --input notes.md --markdown --color
+```
+
+Renders the whole file instead of a hex dump (the `--bytes` limit does not apply): headings, fenced code blocks, and inline emphasis are styled, and GFM tables are padded and aligned per the separator row (`:--`, `--:`, `:-:`):
+
+```
+| Language | Stars | Trend |
+|----------|-------|-------|
+| Rust     |  100k |  up   |
+| Go       |   90k | flat  |
+```
+
+A lone `![alt](image.png)` line is drawn as a 256-color minimap on the `--minimap-scale` grid, resolved relative to the Markdown file. Remote (`http(s)://`) and undecodable images fall back to a one-line placeholder.
+
+### Any-document mode
+
+```bash
+hhead --input report.docx --mode-anydoc --color
+hhead --input data.csv --mode-anydoc --mode-less   # page the converted table
+```
+
+`--mode-anydoc` converts the input to Markdown with [anydoc](https://crates.io/crates/anydoc)
+(PDF, DOCX/ODT, PPTX, XLSX/XLS, ODS, RTF, EPUB, CSV, …) and then renders it
+exactly like `--markdown`, which is implied — the whole file is converted, so
+the `--bytes` limit does not apply, and `--mode-less` pages the result. If
+`anydoc` cannot convert the file, `hhead` warns on stderr and falls back:
+text input (e.g. already-Markdown files) is rendered as Markdown, anything
+else is shown as a hex dump.
+
+### Pager mode
+
+```bash
+hhead --input big.log --mode-less --color --meta
+```
+
+`--mode-less` runs the built-in pager (no external `less` needed) on whatever
+the other options produce — the full hex dump, Markdown render, minimap, or
+metadata block. It reads the whole file, so the `--bytes` limit does not
+apply (like `--markdown`). Keys:
+
+| Key | Action |
+|---|---|
+| `q` / `Esc` | quit |
+| `j` / `↓` / `Enter` | scroll down one line |
+| `k` / `↑` | scroll up one line |
+| `Space` / `f` / `PgDn` | page down |
+| `b` / `PgUp` | page up |
+| `g` / `G` | jump to top / bottom |
+| `/` | search forward (case-insensitive); `Enter` to run, `Esc` to cancel |
+| `n` / `N` | next / previous match |
+
+If stdin or stdout is not a terminal, the pager falls back to dumping the
+whole output, so piping still works.
+
+### Directory tree
+
+```bash
+hhead --input src --meta --color
+```
+
+When `--input` is a directory, `hhead` lists it as a tree (like `tree`)
+instead of hex-dumping. With `--meta`, the tree is preceded by an
+`ls -lah`-style listing of the directory's entries (mode, human-readable
+size, UTC mtime) and a `du -sh *`-style block of recursive sizes with a
+total. `--color` paints directories blue, symlinks cyan, executables green,
+and sizes yellow; `--mode-less` pages the listing.
+
+```
+Directory: src
+drwxr-xr-x   4.0K Sep  1 08:51 cli
+-rw-r--r--    482 Sep  1 08:48 lib.rs
+...
+
+  2.1K	cli
+   482	lib.rs
+...
+   94K	total
+
+src
+├── cli
+│   ├── args.rs
+│   └── mod.rs
+├── lib.rs
+└── ...
+
+5 directories, 18 files
+```
 
 ### Archive with format metadata
 

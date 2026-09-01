@@ -12,7 +12,8 @@ pub struct Args {
     #[arg(long, default_value_t = 256)]
     pub bytes: usize,
 
-    /// Input file
+    /// Input file, or a directory to list as a tree
+    /// (with `--meta`, an `ls -lah`/`du`-style block precedes the tree)
     #[arg(long)]
     pub input: String,
 
@@ -35,6 +36,21 @@ pub struct Args {
     /// Minimap scale in format "ROWSxCOLS" (e.g., "8x12")
     #[arg(long, default_value = "8x12")]
     pub minimap_scale: String,
+
+    /// Render input as Markdown instead of a hex dump (figures use the minimap renderer)
+    #[arg(long, default_value_t = false)]
+    pub markdown: bool,
+
+    /// Page through the output interactively, like `less`
+    /// (works with the other display options; the `--bytes` limit does not apply)
+    #[arg(long, default_value_t = false)]
+    pub mode_less: bool,
+
+    /// Convert the input to Markdown first (via `anydoc`) and render it like
+    /// `--markdown` (which is implied). Text that `anydoc` cannot convert is
+    /// rendered as Markdown; other inputs fall back to the hex dump.
+    #[arg(long, default_value_t = false)]
+    pub mode_anydoc: bool,
 }
 
 impl Args {

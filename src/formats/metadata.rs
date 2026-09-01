@@ -116,7 +116,11 @@ pub fn extract_format_metadata(data: &[u8]) -> Vec<String> {
                 let color_resolution = ((packed >> 4) & 0x07) + 1;
                 let _sorted = (packed & 0x08) != 0;
                 let global_color_table_size = 1 << ((packed & 0x07) + 1);
-                let version = if data.starts_with(b"GIF87a") { "87a" } else { "89a" };
+                let version = if data.starts_with(b"GIF87a") {
+                    "87a"
+                } else {
+                    "89a"
+                };
                 metadata.push(format!("  Version: GIF{}", version));
                 metadata.push(format!("  Dimensions: {} x {}", width, height));
                 metadata.push(format!("  Global color table: {}", global_color_table));
@@ -129,7 +133,8 @@ pub fn extract_format_metadata(data: &[u8]) -> Vec<String> {
         "ZIP" => {
             if data.len() >= 30 && data.starts_with(b"PK\x03\x04") {
                 let compressed_size = u32::from_le_bytes([data[18], data[19], data[20], data[21]]);
-                let uncompressed_size = u32::from_le_bytes([data[22], data[23], data[24], data[25]]);
+                let uncompressed_size =
+                    u32::from_le_bytes([data[22], data[23], data[24], data[25]]);
                 let compression_method = u16::from_le_bytes([data[8], data[9]]);
                 let compression_method_str = match compression_method {
                     0 => "Stored",
@@ -202,7 +207,10 @@ pub fn extract_format_metadata(data: &[u8]) -> Vec<String> {
                 } else {
                     u32::from_be_bytes([data[4], data[5], data[6], data[7]])
                 };
-                metadata.push(format!("  Endianness: {}", if is_little_endian { "Little" } else { "Big" }));
+                metadata.push(format!(
+                    "  Endianness: {}",
+                    if is_little_endian { "Little" } else { "Big" }
+                ));
                 metadata.push(format!("  IFD offset: {}", ifd_offset));
                 // Try to read first IFD for basic image info
                 // This is simplified - full TIFF parsing is complex
@@ -211,12 +219,22 @@ pub fn extract_format_metadata(data: &[u8]) -> Vec<String> {
         "TAR (USTAR)" | "TAR (GNU)" => {
             if data.len() >= 512 {
                 // Parse TAR header
-                let name = String::from_utf8_lossy(&data[0..100]).trim_end_matches('\0').to_string();
-                let _mode = String::from_utf8_lossy(&data[100..108]).trim_end_matches('\0').to_string();
-                let size_str = String::from_utf8_lossy(&data[124..136]).trim_end_matches('\0').to_string();
-                let mtime_str = String::from_utf8_lossy(&data[136..148]).trim_end_matches('\0').to_string();
+                let name = String::from_utf8_lossy(&data[0..100])
+                    .trim_end_matches('\0')
+                    .to_string();
+                let _mode = String::from_utf8_lossy(&data[100..108])
+                    .trim_end_matches('\0')
+                    .to_string();
+                let size_str = String::from_utf8_lossy(&data[124..136])
+                    .trim_end_matches('\0')
+                    .to_string();
+                let mtime_str = String::from_utf8_lossy(&data[136..148])
+                    .trim_end_matches('\0')
+                    .to_string();
                 let typeflag = data[156];
-                let linkname = String::from_utf8_lossy(&data[157..257]).trim_end_matches('\0').to_string();
+                let linkname = String::from_utf8_lossy(&data[157..257])
+                    .trim_end_matches('\0')
+                    .to_string();
                 let type_str = match typeflag as char {
                     '0' | '\0' => "Regular file",
                     '1' => "Hard link",
@@ -243,12 +261,10 @@ pub fn extract_format_metadata(data: &[u8]) -> Vec<String> {
                 }
             }
         }
-        "PDF" => {
-            if data.len() >= 8 {
-                // PDF version is in bytes 5-7 (e.g., "1.4" or "2.0")
-                let version = String::from_utf8_lossy(&data[5..8]);
-                metadata.push(format!("  Version: {}", version));
-            }
+        "PDF" if data.len() >= 8 => {
+            // PDF version is in bytes 5-7 (e.g., "1.4" or "2.0")
+            let version = String::from_utf8_lossy(&data[5..8]);
+            metadata.push(format!("  Version: {}", version));
         }
         _ => {}
     }
@@ -304,7 +320,11 @@ mod tests {
         assert!(metadata.iter().any(|s| s.contains("Dimensions: 800 x 600")));
         assert!(metadata.iter().any(|s| s.contains("Bits per pixel: 24")));
         assert!(metadata.iter().any(|s| s.contains("Compression: BI_RGB")));
-        assert!(metadata.iter().any(|s| s.contains("Orientation: Bottom-up")));
+        assert!(
+            metadata
+                .iter()
+                .any(|s| s.contains("Orientation: Bottom-up"))
+        );
     }
 
     #[test]
@@ -323,8 +343,16 @@ mod tests {
         assert!(!metadata.is_empty());
         assert!(metadata.iter().any(|s| s.contains("Version: GIF89a")));
         assert!(metadata.iter().any(|s| s.contains("Dimensions: 320 x 240")));
-        assert!(metadata.iter().any(|s| s.contains("Global color table: true")));
-        assert!(metadata.iter().any(|s| s.contains("Color resolution: 8 bits")));
+        assert!(
+            metadata
+                .iter()
+                .any(|s| s.contains("Global color table: true"))
+        );
+        assert!(
+            metadata
+                .iter()
+                .any(|s| s.contains("Color resolution: 8 bits"))
+        );
     }
 
     #[test]
@@ -342,8 +370,14 @@ mod tests {
         jpeg.extend_from_slice(&[0; 20]); // remainder / padding
 
         let metadata = extract_format_metadata(&jpeg);
-        assert!(metadata.iter().any(|s| s.contains("Dimensions: 640 x 480")), "{metadata:?}");
-        assert!(metadata.iter().any(|s| s.contains("Components: 3")), "{metadata:?}");
+        assert!(
+            metadata.iter().any(|s| s.contains("Dimensions: 640 x 480")),
+            "{metadata:?}"
+        );
+        assert!(
+            metadata.iter().any(|s| s.contains("Components: 3")),
+            "{metadata:?}"
+        );
     }
 
     #[test]
@@ -354,7 +388,10 @@ mod tests {
         data[8..12].copy_from_slice(&13u32.to_be_bytes());
         data[12..16].copy_from_slice(b"IEND"); // wrong chunk
         let metadata = extract_format_metadata(&data);
-        assert!(metadata.is_empty(), "should refuse to decode non-IHDR first chunk: {metadata:?}");
+        assert!(
+            metadata.is_empty(),
+            "should refuse to decode non-IHDR first chunk: {metadata:?}"
+        );
     }
 
     #[test]
