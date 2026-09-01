@@ -4,8 +4,8 @@ use std::path::Path;
 
 use hhead::cli::Args;
 use hhead::display::{
-    display_hex, display_minimap, display_tree, print_metadata, run_pager, write_dir_listing,
-    write_hex, write_markdown, write_metadata, write_minimap,
+    display_hex, display_minimap, display_tree, print_metadata, run_pager, write_csv_rainbow,
+    write_dir_listing, write_hex, write_markdown, write_metadata, write_minimap,
 };
 use hhead::io::read_file;
 use hhead::utils::parsing::parse_scale;
@@ -13,8 +13,9 @@ use hhead::utils::parsing::parse_scale;
 fn main() -> std::io::Result<()> {
     let args = Args::parse();
 
-    // Enable color override if requested
-    if args.color {
+    // Enable color override if requested (--csv-rainbow is a color effect,
+    // so it implies --color)
+    if args.color || args.csv_rainbow {
         control::set_override(true);
     }
 
@@ -77,10 +78,44 @@ fn main() -> std::io::Result<()> {
             }
             let stdout = std::io::stdout();
             let mut out = stdout.lock();
-            return write_markdown(&mut out, &md, path.parent(), args.color, rows, cols);
+            return write_markdown(
+                &mut out,
+                &md,
+                path.parent(),
+                args.color,
+                rows,
+                cols,
+                args.csv_rainbow,
+            );
         }
         // anydoc could not convert and the input isn't text: fall through to
         // the hex dump below.
+    }
+
+    // Rainbow CSV: render the file as text with each column in its own
+    // color. Whole-file like Markdown mode; non-UTF-8 input falls back to
+    // the hex dump below.
+    if args.csv_rainbow {
+        match std::fs::read_to_string(path) {
+            Ok(text) => {
+                if args.mode_less {
+                    let mut buf = Vec::new();
+                    if args.meta {
+                        write_metadata(&mut buf, path)?;
+                    }
+                    write_csv_rainbow(&mut buf, &text)?;
+                    let content = String::from_utf8_lossy(&buf);
+                    return run_pager(&content, &args.input);
+                }
+                let stdout = std::io::stdout();
+                let mut out = stdout.lock();
+                return write_csv_rainbow(&mut out, &text);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                eprintln!("Warning: --csv-rainbow needs UTF-8 text input; showing a hex dump");
+            }
+            Err(e) => return Err(e),
+        }
     }
 
     // Pager mode pages through the whole hex dump (the --bytes cap does not
@@ -173,7 +208,15 @@ fn run_less(
     }
 
     match markdown {
-        Some(md) => write_markdown(&mut buf, md, path.parent(), args.color, rows, cols)?,
+        Some(md) => write_markdown(
+            &mut buf,
+            md,
+            path.parent(),
+            args.color,
+            rows,
+            cols,
+            args.csv_rainbow,
+        )?,
         None => {
             let data = std::fs::read(path)?;
             write_hex(&mut buf, &data, args.width, args.color, args.utf8)?;
