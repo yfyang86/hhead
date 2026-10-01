@@ -40,7 +40,7 @@ cargo check
 cargo run -- --input Cargo.toml --meta --width 32
 ```
 
-The test suite currently covers 119 unit tests (format detection, metadata extraction, hex formatting, Markdown rendering, terminal graphics/caps/math, color palette, argument parsing, pager helpers) and 32 integration tests that drive the CLI end-to-end via `assert_cmd`.
+The test suite currently covers 128 unit tests (format detection, metadata extraction, hex formatting, Markdown rendering incl. pandoc table/math dialects, terminal graphics/caps/math, color palette, argument parsing, pager helpers) and 36 integration tests that drive the CLI end-to-end via `assert_cmd`. Pandoc fixtures under `tests/data/pandoc/` are generated once by its `regenerate.sh` and committed, so tests never require pandoc.
 
 ## Project layout
 

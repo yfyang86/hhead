@@ -1,10 +1,14 @@
 //! Markdown rendering for the terminal
 //!
-//! A lightweight, line-based renderer: headings, fenced code blocks,
-//! GFM-style pipe tables (aligned and padded), and figures — `![alt](path)`
-//! on its own line is drawn as a 256-color minimap. Inline emphasis, code,
-//! and link markers are ANSI-styled when color is enabled and stripped
-//! otherwise. It is intentionally not a full CommonMark implementation.
+//! A lightweight, line-based renderer: headings, fenced code blocks, tables
+//! (GFM pipe tables plus pandoc's grid and simple/multiline dash tables with
+//! `: caption` lines), and figures — `![alt](path)` on its own line is drawn
+//! as a 256-color minimap (or a terminal-graphics image). With
+//! `--tui-graphics`, TeX math renders too: `$...$`, pandoc-gfm `` `$`...`$` ``
+//! inline spans, `$$...$$` lines/blocks, and ``` math fenced blocks. Inline
+//! emphasis, code, and link markers are ANSI-styled when color is enabled
+//! and stripped otherwise. It is intentionally not a full CommonMark
+//! implementation.
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -70,10 +74,29 @@ pub fn write_markdown<W: Write>(
     let lines: Vec<&str> = text.lines().collect();
     let mut i = 0;
     let mut in_code = false;
+    let mut table_just_ended = false;
 
     while i < lines.len() {
         let line = lines[i];
         let trimmed = line.trim();
+
+        // GFM display math: pandoc's gfm writer emits ``` math fenced
+        // blocks. With math disabled they stay verbatim code blocks.
+        if !in_code && opts.graphics.math && is_math_fence(trimmed) {
+            let mut j = i + 1;
+            let mut parts: Vec<&str> = Vec::new();
+            while j < lines.len() && !lines[j].trim().starts_with("```") {
+                parts.push(lines[j].trim());
+                j += 1;
+            }
+            if j < lines.len() {
+                super::math::write_display_math(out, &parts.join(" "), opts.graphics)?;
+                table_just_ended = false;
+                i = j + 1;
+                continue;
+            }
+            // Unterminated fence: fall through to the generic code handling.
+        }
 
         // Fenced code blocks: content passes through verbatim.
         if trimmed.starts_with("```") {
@@ -93,22 +116,27 @@ pub fn write_markdown<W: Write>(
             continue;
         }
 
-        // Figure: a line that is just `![alt](src)`.
-        if let Some((alt, src)) = parse_image_line(trimmed) {
-            render_figure(out, &alt, &src, base_dir, opts)?;
+        // Pandoc table caption (`: caption` after a table, optionally with
+        // one blank line between).
+        if table_just_ended && trimmed.starts_with(": ") {
+            writeln!(out, "{}", render_inline(trimmed[2..].trim(), opts.color))?;
+            table_just_ended = false;
             i += 1;
             continue;
         }
 
-        // Display math: `$$...$$` on one line, or a `$$`-fenced block.
-        // Only with --tui-graphics (graphics.math); otherwise literal.
+        // Figure: a line that is just `![alt](src)`.
+        if let Some((alt, src)) = parse_image_line(trimmed) {
+            render_figure(out, &alt, &src, base_dir, opts)?;
+            table_just_ended = false;
+            i += 1;
+            continue;
+        }
+
+        // Display math: `$$`-fenced block, or one or more `$$...$$` spans on
+        // the line (pandoc joins consecutive display equations onto one
+        // line). Only with --tui-graphics (graphics.math); otherwise literal.
         if opts.graphics.math && trimmed.starts_with("$$") {
-            if trimmed.len() > 4 && trimmed.ends_with("$$") {
-                let tex = trimmed[2..trimmed.len() - 2].trim();
-                super::math::write_display_math(out, tex, opts.graphics)?;
-                i += 1;
-                continue;
-            }
             if trimmed == "$$" {
                 let mut j = i + 1;
                 let mut parts: Vec<&str> = Vec::new();
@@ -118,14 +146,47 @@ pub fn write_markdown<W: Write>(
                 }
                 if j < lines.len() {
                     super::math::write_display_math(out, &parts.join(" "), opts.graphics)?;
+                    table_just_ended = false;
                     i = j + 1;
                     continue;
                 }
                 // Unterminated `$$`: fall through and render literally.
+            } else {
+                let dchars: Vec<char> = trimmed.chars().collect();
+                let mut spans: Vec<String> = Vec::new();
+                let mut pos = 0;
+                let mut whole_line = true;
+                while pos < dchars.len() {
+                    if dchars[pos].is_whitespace() {
+                        pos += 1;
+                        continue;
+                    }
+                    match scan_math_span(&dchars, pos) {
+                        Some((tex, next))
+                            if dchars[pos] == '$' && dchars.get(pos + 1) == Some(&'$') =>
+                        {
+                            spans.push(tex);
+                            pos = next;
+                        }
+                        _ => {
+                            whole_line = false;
+                            break;
+                        }
+                    }
+                }
+                if whole_line && !spans.is_empty() {
+                    for tex in &spans {
+                        super::math::write_display_math(out, tex, opts.graphics)?;
+                    }
+                    table_just_ended = false;
+                    i += 1;
+                    continue;
+                }
+                // Mixed content: the paragraph path renders spans inline.
             }
         }
 
-        // GFM table: header row, separator row, then body rows.
+        // GFM pipe table: header row, separator row, then body rows.
         if trimmed.contains('|') && i + 1 < lines.len() && is_separator_row(lines[i + 1]) {
             let mut body: Vec<&str> = Vec::new();
             let mut j = i + 2;
@@ -133,14 +194,35 @@ pub fn write_markdown<W: Write>(
                 body.push(lines[j]);
                 j += 1;
             }
-            render_table(out, trimmed, lines[i + 1], &body, opts.color, opts.rainbow)?;
+            render_pipe_table(out, trimmed, lines[i + 1], &body, opts.color, opts.rainbow)?;
+            table_just_ended = true;
             i = j;
+            continue;
+        }
+
+        // Pandoc grid table: `+---+`/`+===+` borders.
+        if is_grid_border(trimmed)
+            && let Some((table, next)) = parse_grid_table(&lines, i)
+        {
+            render_table_data(out, &table, opts.color, opts.rainbow)?;
+            table_just_ended = true;
+            i = next;
+            continue;
+        }
+
+        // Pandoc simple/multiline table: dash separator under the header, or
+        // a top dash border.
+        if let Some((table, next)) = parse_dash_table(&lines, i) {
+            render_table_data(out, &table, opts.color, opts.rainbow)?;
+            table_just_ended = true;
+            i = next;
             continue;
         }
 
         // Heading: 1-6 '#' followed by a space (or nothing).
         if let Some(heading) = parse_heading(trimmed) {
             writeln!(out, "{}", style(&heading, Style::Heading, opts.color))?;
+            table_just_ended = false;
             i += 1;
             continue;
         }
@@ -152,6 +234,7 @@ pub fn write_markdown<W: Write>(
             "{}",
             render_inline_math(line, opts.color, opts.graphics)
         )?;
+        table_just_ended = false;
         i += 1;
     }
     Ok(())
@@ -171,6 +254,18 @@ fn render_inline_math(text: &str, color: bool, graphics: GraphicsOpts) -> String
     let mut i = 0;
     let mut in_code = false;
     while i < chars.len() {
+        // GFM inline math (pandoc's gfm writer): `$`...`$` — check before
+        // the backtick toggle so the span markers aren't read as code.
+        if !in_code
+            && chars[i] == '$'
+            && chars.get(i + 1) == Some(&'`')
+            && let Some((tex, next)) = scan_gfm_math_span(&chars, i)
+        {
+            spans.push(super::math::unicode_math(&tex));
+            protected.push_str(&format!("\u{E000}{}\u{E001}", spans.len() - 1));
+            i = next;
+            continue;
+        }
         if chars[i] == '`' {
             in_code = !in_code;
             protected.push('`');
@@ -234,6 +329,38 @@ fn scan_math_span(chars: &[char], i: usize) -> Option<(String, usize)> {
         k += 1;
     }
     None
+}
+
+/// Scan a GFM inline math span `$`...`$` starting at `chars[i] == '$'`
+/// (pandoc's gfm writer wraps TeX in dollar-backticks). Same whitespace
+/// guards as [`scan_math_span`].
+fn scan_gfm_math_span(chars: &[char], i: usize) -> Option<(String, usize)> {
+    let content_start = i + 2; // past "$`"
+    if chars
+        .get(content_start)
+        .map(|c| c.is_whitespace())
+        .unwrap_or(true)
+    {
+        return None;
+    }
+    let mut k = content_start;
+    while k + 1 < chars.len() {
+        if chars[k] == '`' && chars[k + 1] == '$' {
+            if chars[k - 1].is_whitespace() {
+                return None;
+            }
+            return Some((chars[content_start..k].iter().collect(), k + 2));
+        }
+        k += 1;
+    }
+    None
+}
+
+/// A ``` math fenced block line (pandoc gfm display math).
+fn is_math_fence(line: &str) -> bool {
+    line.strip_prefix("```")
+        .map(|info| info.trim().eq_ignore_ascii_case("math"))
+        .unwrap_or(false)
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -309,6 +436,14 @@ enum Align {
     Center,
 }
 
+/// A parsed table, source-format agnostic (pipe, grid, or pandoc dash
+/// tables all reduce to this).
+struct TableData {
+    header: Vec<String>,
+    aligns: Vec<Align>,
+    body: Vec<Vec<String>>,
+}
+
 /// A separator row like `| --- | :-: | --: |` (also a bare `---`).
 fn is_separator_row(line: &str) -> bool {
     let t = line.trim();
@@ -342,7 +477,7 @@ fn parse_aligns(sep_line: &str, ncols: usize) -> Vec<Align> {
         .collect()
 }
 
-fn render_table<W: Write>(
+fn render_pipe_table<W: Write>(
     out: &mut W,
     header_line: &str,
     sep_line: &str,
@@ -351,25 +486,335 @@ fn render_table<W: Write>(
     rainbow: bool,
 ) -> io::Result<()> {
     let header = split_row(header_line);
-    let body: Vec<Vec<String>> = body_lines.iter().map(|l| split_row(l)).collect();
-
     let ncols = std::iter::once(header.len())
-        .chain(body.iter().map(|r| r.len()))
+        .chain(body_lines.iter().map(|l| split_row(l).len()))
+        .max()
+        .unwrap_or(0);
+    let table = TableData {
+        header,
+        aligns: parse_aligns(sep_line, ncols),
+        body: body_lines.iter().map(|l| split_row(l)).collect(),
+    };
+    render_table_data(out, &table, color, rainbow)
+}
+
+/// A grid-table border like `+---+---+` or `+===+===+` (pandoc's default
+/// markdown writer uses grid tables when cells contain block content).
+fn is_grid_border(line: &str) -> bool {
+    let t = line.trim();
+    t.starts_with('+') && t.len() > 1 && t.chars().all(|c| matches!(c, '+' | '-' | '=' | ':'))
+}
+
+/// Parse a pandoc grid table starting at a border line. Returns the table
+/// and the index of the first line past it. Column boundaries are the `+`
+/// positions; alignment colons sit just inside them. The first row block is
+/// the header; wrapped cell lines within a block join with a space.
+fn parse_grid_table(lines: &[&str], start: usize) -> Option<(TableData, usize)> {
+    let border: Vec<char> = lines[start].chars().collect();
+    let bounds: Vec<usize> = border
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &c)| (c == '+').then_some(i))
+        .collect();
+    if bounds.len() < 2 {
+        return None;
+    }
+    let aligns: Vec<Align> = bounds
+        .windows(2)
+        .map(|w| {
+            let left_colon = border.get(w[0] + 1) == Some(&':');
+            let right_colon = w[1] > 0 && border.get(w[1] - 1) == Some(&':');
+            match (left_colon, right_colon) {
+                (true, true) => Align::Center,
+                (false, true) => Align::Right,
+                _ => Align::Left,
+            }
+        })
+        .collect();
+
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut current: Vec<String> = vec![String::new(); bounds.len() - 1];
+    let mut have_current = false;
+    let mut i = start + 1;
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim_start();
+        if is_grid_border(line) {
+            if have_current {
+                rows.push(std::mem::take(&mut current));
+                current = vec![String::new(); bounds.len() - 1];
+                have_current = false;
+            }
+            i += 1;
+            if i >= lines.len() || !lines[i].trim_start().starts_with('|') {
+                break; // bottom border: table ends
+            }
+        } else if trimmed.starts_with('|') {
+            let cells: Vec<char> = line.chars().collect();
+            for (k, w) in bounds.windows(2).enumerate() {
+                let from = (w[0] + 1).min(cells.len());
+                let to = w[1].min(cells.len());
+                let fragment: String = cells[from..to]
+                    .iter()
+                    .collect::<String>()
+                    .trim()
+                    .to_string();
+                if fragment.is_empty() {
+                    continue;
+                }
+                if !current[k].is_empty() {
+                    current[k].push(' ');
+                }
+                current[k].push_str(&fragment);
+            }
+            have_current = true;
+            i += 1;
+        } else {
+            break; // unterminated; keep what we have
+        }
+    }
+    if have_current {
+        rows.push(current);
+    }
+    if rows.is_empty() {
+        return None;
+    }
+    let header = rows.remove(0);
+    Some((
+        TableData {
+            header,
+            aligns,
+            body: rows,
+        },
+        i,
+    ))
+}
+
+/// A dash-only line like `  ----- -----` (pandoc simple/multiline table
+/// part). Guarded against setext heading underlines and `---` rules: those
+/// start at column 0 as one dash group, while pandoc tables are indented or
+/// have multiple groups.
+fn is_dash_line(line: &str) -> bool {
+    let t = line.trim();
+    if t.is_empty() || !t.contains('-') {
+        return false;
+    }
+    if !t.chars().all(|c| c == '-' || c == ' ') {
+        return false;
+    }
+    line.starts_with(' ') || line.starts_with('\t') || t.contains(' ')
+}
+
+/// Dash runs of a dash line as `(start, end)` char indices (end exclusive);
+/// they define the column spans of a simple/multiline table.
+fn dash_groups(line: &str) -> Vec<(usize, usize)> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut groups = Vec::new();
+    let mut start = None;
+    for (i, &c) in chars.iter().enumerate() {
+        match (c == '-', start) {
+            (true, None) => start = Some(i),
+            (false, Some(s)) => {
+                groups.push((s, i));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(s) = start {
+        groups.push((s, chars.len()));
+    }
+    groups
+}
+
+/// Slice one table row line by column spans; wrapped fragments (multiline
+/// tables) join with a space.
+fn dash_row_cells(lines: &[&str], cols: &[(usize, usize)]) -> Vec<String> {
+    cols.iter()
+        .map(|&(s, e)| {
+            lines
+                .iter()
+                .map(|l| {
+                    let chars: Vec<char> = l.chars().collect();
+                    let from = s.min(chars.len());
+                    let to = e.min(chars.len());
+                    chars[from..to]
+                        .iter()
+                        .collect::<String>()
+                        .trim()
+                        .to_string()
+                })
+                .filter(|f| !f.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect()
+}
+
+/// Column alignment from the header text's position within its dash span
+/// (pandoc's rule: flush right only → right, flush left only → left,
+/// extends on both sides → center, flush both → left).
+fn dash_aligns(header_lines: &[&str], cols: &[(usize, usize)]) -> Vec<Align> {
+    let header: Vec<char> = header_lines.first().unwrap_or(&"").chars().collect();
+    cols.iter()
+        .map(|&(s, e)| {
+            let end = e.min(header.len());
+            let start = s.min(end);
+            let mut first = None;
+            let mut last = start;
+            for (k, &c) in header.iter().enumerate().take(end).skip(start) {
+                if !c.is_whitespace() {
+                    first.get_or_insert(k);
+                    last = k;
+                }
+            }
+            match first {
+                None => Align::Left,
+                Some(f) => {
+                    let flush_left = f == s;
+                    let flush_right = last + 1 >= end;
+                    match (flush_left, flush_right) {
+                        (false, true) => Align::Right,
+                        (false, false) => Align::Center,
+                        _ => Align::Left,
+                    }
+                }
+            }
+        })
+        .collect()
+}
+
+/// Parse a pandoc simple or multiline table starting at `start`.
+///
+/// Multiline: top dash border, header block, separator, blank-separated
+/// body row groups, bottom border. Simple: header line, dash separator
+/// (≥2 groups), one-line body rows until a blank line. Returns the table
+/// and the index of the first line past it.
+fn parse_dash_table(lines: &[&str], start: usize) -> Option<(TableData, usize)> {
+    if is_dash_line(lines[start]) {
+        // Multiline form.
+        let cols = dash_groups(lines[start]);
+        if cols.is_empty() {
+            return None;
+        }
+        // Content blocks between dash borders; blanks separate row groups.
+        let mut blocks: Vec<Vec<&str>> = Vec::new();
+        let mut current: Vec<&str> = Vec::new();
+        let mut j = start + 1;
+        let closed = loop {
+            if j >= lines.len() {
+                break false;
+            }
+            let line = lines[j];
+            if is_dash_line(line) {
+                if !current.is_empty() {
+                    blocks.push(std::mem::take(&mut current));
+                }
+                j += 1;
+                // A border followed by content is an inner separator;
+                // anything else makes it the bottom border.
+                if j >= lines.len()
+                    || lines[j].trim().is_empty()
+                    || is_dash_line(lines[j])
+                    || is_grid_border(lines[j])
+                {
+                    break true;
+                }
+            } else {
+                current.push(line);
+                j += 1;
+            }
+        };
+        if !closed || blocks.is_empty() {
+            return None;
+        }
+        let (header_lines, body_blocks): (Vec<&str>, &[Vec<&str>]) = if blocks.len() >= 2 {
+            (blocks[0].clone(), &blocks[1..])
+        } else {
+            (Vec::new(), &blocks[..]) // headerless: single block is the body
+        };
+        let aligns = dash_aligns(&header_lines, &cols);
+        let header = dash_row_cells(&header_lines, &cols);
+        let mut body = Vec::new();
+        for block in body_blocks {
+            // pandoc separates wrapped multiline rows with blank lines;
+            // compact tables have none, so each line is its own row.
+            if block.iter().any(|l| l.trim().is_empty()) {
+                for group in block.split(|l| l.trim().is_empty()) {
+                    if !group.is_empty() {
+                        body.push(dash_row_cells(group, &cols));
+                    }
+                }
+            } else {
+                for line in block.iter().filter(|l| !l.trim().is_empty()) {
+                    body.push(dash_row_cells(&[line], &cols));
+                }
+            }
+        }
+        return Some((
+            TableData {
+                header,
+                aligns,
+                body,
+            },
+            j,
+        ));
+    }
+
+    // Simple form: header line, then a dash separator with ≥2 groups.
+    if lines[start].trim().is_empty() || start + 1 >= lines.len() || !is_dash_line(lines[start + 1])
+    {
+        return None;
+    }
+    let cols = dash_groups(lines[start + 1]);
+    if cols.len() < 2 {
+        return None;
+    }
+    let header = dash_row_cells(&[lines[start]], &cols);
+    let aligns = dash_aligns(&[lines[start]], &cols);
+    let mut body = Vec::new();
+    let mut j = start + 2;
+    while j < lines.len() {
+        let line = lines[j];
+        if line.trim().is_empty() || is_dash_line(line) {
+            break;
+        }
+        body.push(dash_row_cells(&[line], &cols));
+        j += 1;
+    }
+    Some((
+        TableData {
+            header,
+            aligns,
+            body,
+        },
+        j,
+    ))
+}
+
+fn render_table_data<W: Write>(
+    out: &mut W,
+    table: &TableData,
+    color: bool,
+    rainbow: bool,
+) -> io::Result<()> {
+    let ncols = std::iter::once(table.header.len())
+        .chain(table.body.iter().map(|r| r.len()))
         .max()
         .unwrap_or(0);
     if ncols == 0 {
         return Ok(());
     }
+    let aligns = &table.aligns;
 
     // Column widths come from the *plain* text (markers stripped, no ANSI),
     // so styling never throws off the padding.
     let mut widths = vec![0usize; ncols];
-    for row in std::iter::once(&header).chain(body.iter()) {
+    for row in std::iter::once(&table.header).chain(table.body.iter()) {
         for (j, cell) in row.iter().enumerate() {
             widths[j] = widths[j].max(render_inline(cell, false).chars().count());
         }
     }
-    let aligns = parse_aligns(sep_line, ncols);
 
     let render_row = |cells: &[String], plain: bool, header_row: bool| -> String {
         let mut line = String::from("|");
@@ -387,32 +832,45 @@ fn render_table<W: Write>(
             } else {
                 render_inline(cell, color)
             };
+            let align = aligns.get(j).copied().unwrap_or(Align::Left);
             line.push(' ');
-            line.push_str(&pad_cell(&rendered, plain_len, *width, aligns[j]));
+            line.push_str(&pad_cell(&rendered, plain_len, *width, align));
             line.push_str(" |");
         }
         line
     };
 
-    // Header cells are rendered plain so the whole line can be bolded
-    // without nested ANSI resets cancelling the style mid-row; in rainbow
-    // mode each cell is bolded individually inside its column color instead.
-    let header_out = render_row(&header, true, true);
-    if rainbow {
-        writeln!(out, "{}", header_out)?;
+    let divider = |widths: &[usize]| -> String {
+        let mut d = String::from("|");
+        for width in widths {
+            d.push_str(&"-".repeat(width + 2));
+            d.push('|');
+        }
+        d
+    };
+
+    // Headerless tables (pandoc emits them) get a framing divider instead of
+    // a header row.
+    if table.header.iter().all(|c| c.is_empty()) {
+        writeln!(out, "{}", divider(&widths))?;
     } else {
-        writeln!(out, "{}", style(&header_out, Style::Bold, color))?;
+        // Header cells are rendered plain so the whole line can be bolded
+        // without nested ANSI resets cancelling the style mid-row; in rainbow
+        // mode each cell is bolded individually inside its column color instead.
+        let header_out = render_row(&table.header, true, true);
+        if rainbow {
+            writeln!(out, "{}", header_out)?;
+        } else {
+            writeln!(out, "{}", style(&header_out, Style::Bold, color))?;
+        }
+        writeln!(out, "{}", divider(&widths))?;
     }
 
-    let mut divider = String::from("|");
-    for width in &widths {
-        divider.push_str(&"-".repeat(width + 2));
-        divider.push('|');
-    }
-    writeln!(out, "{}", divider)?;
-
-    for row in &body {
+    for row in &table.body {
         writeln!(out, "{}", render_row(row, false, false))?;
+    }
+    if table.header.iter().all(|c| c.is_empty()) {
+        writeln!(out, "{}", divider(&widths))?;
     }
     Ok(())
 }
@@ -786,6 +1244,104 @@ mod tests {
                 ..MarkdownOpts::default()
             },
         )
+    }
+
+    #[test]
+    fn test_gfm_inline_math_dollar_backtick() {
+        // pandoc `-t gfm` writes inline math as `$`...`$`.
+        let out = capture_math("Euler: $`e^{i\\pi} + 1 = 0`$ and $`\\alpha`$ here\n");
+        assert_eq!(out, "Euler: e^(iπ) + 1 = 0 and α here\n");
+        // Without math enabled the spans render as ordinary code spans.
+        let out = capture("Euler: $`e^{i\\pi}`$\n", false);
+        assert!(out.contains("$e^{i\\pi}$"), "{out:?}");
+    }
+
+    #[test]
+    fn test_gfm_math_fence_block() {
+        // pandoc `-t gfm` writes display math as ``` math fenced blocks.
+        let out = capture_math("before\n``` math\nE = mc^2\n```\nafter\n");
+        assert_eq!(out, "before\nE = mc²\nafter\n");
+        // Without math, the fence stays a verbatim code block.
+        let out = capture("``` math\nE = mc^2\n```\n", false);
+        assert!(out.contains("E = mc^2\n"), "{out:?}");
+    }
+
+    #[test]
+    fn test_display_math_multiple_spans_one_line() {
+        // pandoc joins consecutive display equations onto one line.
+        let out = capture_math("$$E = mc^2$$ $$\\frac{1}{2}$$\n");
+        assert_eq!(out, "E = mc²\n1/2\n");
+    }
+
+    #[test]
+    fn test_pandoc_simple_table_with_caption() {
+        // pandoc's default markdown: space-aligned columns, dash separator
+        // under the header, `: caption` after a blank line.
+        let md = "  Name     Age    Score\n  ------- ----- -------\n  Alice    30      91.5\n  Bob      25      88.0\n\n  : Scores\n";
+        let out = capture(md, false);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "| Name  | Age | Score |");
+        assert_eq!(lines[1], "|-------|-----|-------|");
+        // Age centers, Score right-aligns (header flush rules).
+        assert_eq!(lines[2], "| Alice | 30  |  91.5 |");
+        assert_eq!(lines[3], "| Bob   | 25  |  88.0 |");
+        assert_eq!(lines[5], "Scores");
+    }
+
+    #[test]
+    fn test_pandoc_simple_table_alignment() {
+        // lcr tabular → header flush-left / centered / flush-right.
+        let md = "  Name     Age    Score\n  ------- ----- -------\n  Alice    30      91.5\n";
+        let out = capture(md, false);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[2], "| Alice | 30  |  91.5 |");
+    }
+
+    #[test]
+    fn test_pandoc_multiline_table_bordered() {
+        // Headerless multiline form: top/bottom dash borders, one line per
+        // row, framed with dividers.
+        let md = "  ----- -----------\n  Alice long text\n  Bob   short\n  ----- -----------\n";
+        let out = capture(md, false);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "|-------|-----------|");
+        assert_eq!(lines[1], "| Alice | long text |");
+        assert_eq!(lines[2], "| Bob   | short     |");
+        assert_eq!(lines[3], "|-------|-----------|");
+    }
+
+    #[test]
+    fn test_pandoc_multiline_wrapped_rows() {
+        // Wrapped rows are blank-line separated; continuation lines join
+        // into their row's cell.
+        let md = "  ----- -----------\n  Name  Description\n  ----- -----------\n  Alice first part\n        second part\n\n  Bob   short\n\n  ----- -----------\n";
+        let out = capture(md, false);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "| Name  | Description            |");
+        assert!(
+            out.contains("| Alice | first part second part |"),
+            "{out:?}"
+        );
+        assert!(out.contains("| Bob   | short"), "{out:?}");
+    }
+
+    #[test]
+    fn test_pandoc_grid_table() {
+        let md = "+:-----+:--------+\n| Term | Details |\n+------+---------+\n| X    | - a     |\n|      |         |\n|      | - b     |\n+------+---------+\n";
+        let out = capture(md, false);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "| Term | Details |");
+        assert_eq!(lines[1], "|------|---------|");
+        assert_eq!(lines[2], "| X    | - a - b |");
+    }
+
+    #[test]
+    fn test_dash_line_guards_keep_setext_and_rules() {
+        // Setext H2 and a horizontal rule are not tables.
+        let out = capture("Title\n-----\n", false);
+        assert_eq!(out, "Title\n-----\n");
+        let out = capture("some text\n\n---\n", false);
+        assert_eq!(out, "some text\n\n---\n");
     }
 
     #[test]

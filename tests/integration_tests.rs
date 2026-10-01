@@ -617,3 +617,89 @@ fn test_cli_tui_graphics_math_unicode_fallback() -> Result<(), Box<dyn std::erro
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Pandoc-generated Markdown (fixtures in tests/data/pandoc, regenerate.sh)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_cli_pandoc_default_markdown() -> Result<(), Box<dyn std::error::Error>> {
+    // pandoc -t markdown: `$...$` inline math, `$$...$$` display math, a
+    // simple (dash) table and a `: caption`.
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input")
+        .arg("tests/data/pandoc/default.md")
+        .arg("--markdown")
+        .arg("--tui-graphics");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("e^(iπ) + 1 = 0"))
+        .stdout(predicate::str::contains("E = mc²"))
+        .stdout(predicate::str::contains("| Name  | Age | Score |"))
+        .stdout(predicate::str::contains("| Alice | 30  |  91.5 |"))
+        .stdout(predicate::str::contains("Scores"))
+        .stdout(predicate::str::contains("e^{i\\pi}").not());
+    Ok(())
+}
+
+#[test]
+fn test_cli_pandoc_gfm_markdown() -> Result<(), Box<dyn std::error::Error>> {
+    // pandoc -t gfm: `$`...`$` inline math, ``` math display blocks, pipe
+    // table.
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input")
+        .arg("tests/data/pandoc/gfm.md")
+        .arg("--markdown")
+        .arg("--tui-graphics");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("e^(iπ) + 1 = 0"))
+        .stdout(predicate::str::contains("E = mc²"))
+        .stdout(predicate::str::contains("∫₀¹ x²dx = 1/3"))
+        .stdout(predicate::str::contains("| Name  | Age | Score |"))
+        // No spurious backticks or math fences remain.
+        .stdout(predicate::str::contains("`$").not())
+        .stdout(predicate::str::contains("$`").not())
+        .stdout(predicate::str::contains("``` math").not());
+    Ok(())
+}
+
+#[test]
+fn test_cli_pandoc_gfm_math_literal_without_graphics_flag() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input")
+        .arg("tests/data/pandoc/gfm.md")
+        .arg("--markdown");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("$e^{i\\pi} + 1 = 0$"))
+        // Display math stays raw TeX source without --tui-graphics.
+        .stdout(predicate::str::contains("E = mc^2"))
+        .stdout(predicate::str::contains("E = mc²").not());
+    Ok(())
+}
+
+#[test]
+fn test_cli_pandoc_grid_and_multiline_tables() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input")
+        .arg("tests/data/pandoc/grid.md")
+        .arg("--markdown");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("| Term | Details |"))
+        .stdout(predicate::str::contains("| X    | - a - b |"));
+
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input")
+        .arg("tests/data/pandoc/multiline.md")
+        .arg("--markdown");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "| Alice | Has a very long description",
+        ))
+        .stdout(predicate::str::contains("| Bob   | Short"));
+    Ok(())
+}

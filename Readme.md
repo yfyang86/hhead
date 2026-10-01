@@ -71,7 +71,7 @@ hhead --input document.pdf --width 32 --bytes 128
 | `--utf8` | Decode the character column as UTF-8 | off |
 | `--minimap` | Render a 256-color thumbnail of image input | off |
 | `--minimap-scale <ROWSxCOLS>` | Thumbnail grid size, e.g. `8x12` | `8x12` |
-| `--markdown` | Render Markdown input instead of a hex dump (aligned tables; figures as minimaps) | off |
+| `--markdown` | Render Markdown input instead of a hex dump (aligned tables — GFM pipe, pandoc grid and simple/multiline — with figures as minimaps) | off |
 | `--mode-less` | Page through the output interactively, like `less` (works with the other options; the `--bytes` limit does not apply) | off |
 | `--mode-anydoc` | Convert the input to Markdown first (via `anydoc`), then render it like `--markdown` (which is implied) | off |
 | `--csv-rainbow` | Paint each CSV/TSV column in its own color (implies `--color`; whole file, `--bytes` does not apply); with `--markdown`/`--mode-anydoc`, table columns get the same palette | off |
@@ -91,8 +91,9 @@ and Ghostty), iTerm2's OSC 1337, or DEC sixel (foot, mlterm, Contour, xterm
   force a protocol (e.g. when redirecting to a file for later display).
 - Inside tmux, auto detection resolves to no graphics (passthrough is off by
   default); a forced protocol is wrapped in DCS passthrough.
-- In `--markdown`/`--mode-anydoc` documents, `$...$` and `$$...$$` math spans
-  are rendered once `--tui-graphics` is on: display math becomes a typeset
+- In `--markdown`/`--mode-anydoc` documents, math spans are rendered once
+  `--tui-graphics` is on: `$...$` inline, pandoc-gfm `` `$`...`$` `` inline,
+  `$$...$$` and ``` math display blocks. Display math becomes a typeset
   image when `typst` (≥ 0.4) is on `PATH`, and everything degrades to a
   Unicode approximation (`\frac{1}{2}` → `1/2`, `\alpha` → `α`) otherwise.
   Currency like `$5 and $10` stays literal.
