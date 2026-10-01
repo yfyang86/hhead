@@ -5,6 +5,7 @@ use std::path::Path;
 
 use image::{GenericImageView, ImageReader};
 
+use crate::display::graphics::{GraphicsOpts, write_image};
 use crate::utils::color::rgb_to_256;
 
 /// Display a minimap of an image file
@@ -50,6 +51,34 @@ pub fn write_minimap<W: Write>(
         writeln!(out)?;
     }
     Ok(())
+}
+
+/// Display an image file through a terminal graphics protocol
+/// (`--tui-graphics`): kitty APC, iTerm2 OSC 1337, or in-process sixel,
+/// sized to a `rows`×`cols` cell box.
+pub fn display_minimap_graphics(
+    path: &Path,
+    rows: usize,
+    cols: usize,
+    opts: GraphicsOpts,
+) -> io::Result<()> {
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    write_minimap_graphics(&mut out, path, rows, cols, opts)
+}
+
+/// Same as [`display_minimap_graphics`] but writes to an arbitrary [`Write`].
+pub fn write_minimap_graphics<W: Write>(
+    out: &mut W,
+    path: &Path,
+    rows: usize,
+    cols: usize,
+    opts: GraphicsOpts,
+) -> io::Result<()> {
+    let img = ImageReader::open(path)?
+        .decode()
+        .map_err(|e| io::Error::other(format!("Failed to decode image: {}", e)))?;
+    write_image(out, &img, opts, rows, cols)
 }
 
 #[cfg(test)]

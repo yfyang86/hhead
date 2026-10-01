@@ -1,13 +1,16 @@
 use clap::Parser;
 use colored::control;
+use std::io::IsTerminal;
 use std::path::Path;
 
 use hhead::cli::Args;
 use hhead::display::{
-    display_hex, display_minimap, display_tree, print_metadata, run_pager, write_csv_rainbow,
+    GraphicsOpts, GraphicsTheme, MarkdownOpts, display_hex, display_minimap,
+    display_minimap_graphics, display_tree, print_metadata, run_pager, write_csv_rainbow,
     write_dir_listing, write_hex, write_markdown, write_metadata, write_minimap,
 };
 use hhead::io::read_file;
+use hhead::utils::caps::{self, GraphicsProto, TerminalCaps};
 use hhead::utils::parsing::parse_scale;
 
 fn main() -> std::io::Result<()> {
@@ -19,16 +22,29 @@ fn main() -> std::io::Result<()> {
         control::set_override(true);
     }
 
+    // `--tui-caps` is a pure diagnostic: print and exit before any
+    // filesystem work (it is also the one mode that needs no --input).
+    if args.tui_caps {
+        caps::print_caps_report();
+        return Ok(());
+    }
+
     // Validate parameters using Args::validate method
     if let Err(err) = args.validate() {
         eprintln!("Error: {}", err);
         std::process::exit(1);
     }
 
+    // clap requires --input unless --tui-caps was given (handled above).
+    let input = args.input.as_deref().expect("required by clap");
+
+    // Terminal graphics: off unless --tui-graphics is passed.
+    let graphics = resolve_graphics(&args);
+
     // Check if file exists
-    let path = Path::new(&args.input);
+    let path = Path::new(input);
     if !path.exists() {
-        eprintln!("Error: File '{}' not found", args.input);
+        eprintln!("Error: File '{}' not found", input);
         std::process::exit(1);
     }
 
@@ -40,7 +56,7 @@ fn main() -> std::io::Result<()> {
             let mut buf = Vec::new();
             write_dir_listing(&mut buf, path, args.color, args.meta)?;
             let content = String::from_utf8_lossy(&buf);
-            return run_pager(&content, &args.input);
+            return run_pager(&content, input);
         }
         return display_tree(path, args.color, args.meta);
     }
@@ -54,7 +70,12 @@ fn main() -> std::io::Result<()> {
     if args.minimap {
         match parse_scale(&args.minimap_scale) {
             Some((rows, cols)) => {
-                if let Err(e) = display_minimap(path, rows, cols) {
+                let result = if graphics.enabled() {
+                    display_minimap_graphics(path, rows, cols, graphics)
+                } else {
+                    display_minimap(path, rows, cols)
+                };
+                if let Err(e) = result {
                     eprintln!("Warning: Minimap failed: {}", e);
                     // Continue with hex dump
                 }
@@ -82,10 +103,13 @@ fn main() -> std::io::Result<()> {
                 &mut out,
                 &md,
                 path.parent(),
-                args.color,
-                rows,
-                cols,
-                args.csv_rainbow,
+                MarkdownOpts {
+                    color: args.color,
+                    img_rows: rows,
+                    img_cols: cols,
+                    rainbow: args.csv_rainbow,
+                    graphics,
+                },
             );
         }
         // anydoc could not convert and the input isn't text: fall through to
@@ -105,7 +129,7 @@ fn main() -> std::io::Result<()> {
                     }
                     write_csv_rainbow(&mut buf, &text)?;
                     let content = String::from_utf8_lossy(&buf);
-                    return run_pager(&content, &args.input);
+                    return run_pager(&content, input);
                 }
                 let stdout = std::io::stdout();
                 let mut out = stdout.lock();
@@ -132,6 +156,35 @@ fn main() -> std::io::Result<()> {
     display_hex(&data, args.width, args.color, args.utf8);
 
     Ok(())
+}
+
+/// Resolve `--tui-graphics` into concrete render options. Auto mode emits
+/// only when stdout is a real terminal and env detection found a protocol —
+/// pipes and unknown terminals keep the text/block fallbacks. tmux disables
+/// auto detection (passthrough is off there by default); a forced protocol
+/// still emits, with DCS passthrough wrapping applied by the emitter.
+fn resolve_graphics(args: &Args) -> GraphicsOpts {
+    let proto = match args.tui_graphics.as_deref() {
+        None | Some("off") => GraphicsProto::None,
+        Some("kitty") => GraphicsProto::Kitty,
+        Some("iterm2") => GraphicsProto::ITerm2,
+        Some("sixel") => GraphicsProto::Sixel,
+        _ => {
+            if std::io::stdout().is_terminal() {
+                TerminalCaps::detect().graphics
+            } else {
+                GraphicsProto::None
+            }
+        }
+    };
+    GraphicsOpts {
+        proto,
+        in_tmux: std::env::var_os("TMUX").is_some(),
+        theme: GraphicsTheme::parse(&args.tui_graphics_theme),
+        // Math spans render whenever --tui-graphics is on, even if auto
+        // detection found no protocol (the Unicode approximation applies).
+        math: matches!(args.tui_graphics.as_deref(), Some(p) if p != "off"),
+    }
 }
 
 /// Parse "ROWSxCOLS" with the same fallback the Markdown path uses.
@@ -185,6 +238,10 @@ fn markdown_source(path: &Path, convert: bool) -> std::io::Result<Option<Vec<u8>
 /// `--mode-anydoc` is in play) or `None` for a plain hex dump of the whole
 /// file — the pager's job is to move through it, so the `--bytes` limit does
 /// not apply (mirroring Markdown mode).
+///
+/// Graphics escapes (`--tui-graphics`) are deliberately not used here: the
+/// pager redraws a buffered document on an alternate screen, where image
+/// escapes cannot survive scrolling — figures stay block minimaps.
 fn run_less(
     path: &Path,
     args: &Args,
@@ -212,10 +269,13 @@ fn run_less(
             &mut buf,
             md,
             path.parent(),
-            args.color,
-            rows,
-            cols,
-            args.csv_rainbow,
+            MarkdownOpts {
+                color: args.color,
+                img_rows: rows,
+                img_cols: cols,
+                rainbow: args.csv_rainbow,
+                graphics: GraphicsOpts::default(),
+            },
         )?,
         None => {
             let data = std::fs::read(path)?;
@@ -224,5 +284,5 @@ fn run_less(
     }
 
     let content = String::from_utf8_lossy(&buf);
-    run_pager(&content, &args.input)
+    run_pager(&content, &path.to_string_lossy())
 }

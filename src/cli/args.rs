@@ -14,8 +14,8 @@ pub struct Args {
 
     /// Input file, or a directory to list as a tree
     /// (with `--meta`, an `ls -lah`/`du`-style block precedes the tree)
-    #[arg(long)]
-    pub input: String,
+    #[arg(long, required_unless_present = "tui_caps")]
+    pub input: Option<String>,
 
     /// Colorize output
     #[arg(long, default_value_t = false)]
@@ -58,6 +58,26 @@ pub struct Args {
     /// table columns are painted with the same palette
     #[arg(long, default_value_t = false)]
     pub csv_rainbow: bool,
+
+    /// Terminal graphics for images (minimap, Markdown figures, display math):
+    /// the bare flag auto-detects the protocol, or force one of
+    /// kitty|iterm2|sixel|off. Off by default; ignored under `--mode-less`
+    #[arg(long, value_name = "PROTO", num_args = 0..=1, default_missing_value = "auto",
+          value_parser = ["auto", "kitty", "iterm2", "sixel", "off"])]
+    pub tui_graphics: Option<String>,
+
+    /// Theme for generated graphics (display math): `dark` draws white ink,
+    /// `light` black ink, both on a transparent background (sixel composites
+    /// onto the matching solid background — the protocol has no alpha).
+    /// Only consulted when `--tui-graphics` is active
+    #[arg(long, value_name = "THEME", default_value = "dark",
+          value_parser = ["dark", "light"])]
+    pub tui_graphics_theme: String,
+
+    /// Print detected terminal capabilities (graphics protocol, truecolor,
+    /// cell geometry; live-probes the terminal when interactive) and exit
+    #[arg(long, default_value_t = false)]
+    pub tui_caps: bool,
 }
 
 impl Args {

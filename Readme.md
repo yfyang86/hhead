@@ -75,6 +75,48 @@ hhead --input document.pdf --width 32 --bytes 128
 | `--mode-less` | Page through the output interactively, like `less` (works with the other options; the `--bytes` limit does not apply) | off |
 | `--mode-anydoc` | Convert the input to Markdown first (via `anydoc`), then render it like `--markdown` (which is implied) | off |
 | `--csv-rainbow` | Paint each CSV/TSV column in its own color (implies `--color`; whole file, `--bytes` does not apply); with `--markdown`/`--mode-anydoc`, table columns get the same palette | off |
+| `--tui-graphics[=<PROTO>]` | Render images (minimap, Markdown figures, display math) through a terminal graphics protocol: bare flag auto-detects, or force `kitty`/`iterm2`/`sixel`/`off`. Ignored under `--mode-less` | off |
+| `--tui-graphics-theme <THEME>` | Ink color for generated graphics (display math): `dark` = white ink, `light` = black ink, both on a transparent background | `dark` |
+| `--tui-caps` | Print detected terminal capabilities (graphics protocol, truecolor, cell geometry; live-probes an interactive terminal) and exit | off |
+
+### Terminal graphics
+
+`--tui-graphics` upgrades image output from the 256-color block grid to real
+graphics when the terminal supports a protocol — Kitty's APC (also WezTerm
+and Ghostty), iTerm2's OSC 1337, or DEC sixel (foot, mlterm, Contour, xterm
+`-ti vt340`). Sixel is encoded in-process; no external converters are needed.
+
+- Auto detection is environment-based and only fires on a real TTY, so piped
+  output never contains escape sequences. Use `=kitty`/`=iterm2`/`=sixel` to
+  force a protocol (e.g. when redirecting to a file for later display).
+- Inside tmux, auto detection resolves to no graphics (passthrough is off by
+  default); a forced protocol is wrapped in DCS passthrough.
+- In `--markdown`/`--mode-anydoc` documents, `$...$` and `$$...$$` math spans
+  are rendered once `--tui-graphics` is on: display math becomes a typeset
+  image when `typst` (≥ 0.4) is on `PATH`, and everything degrades to a
+  Unicode approximation (`\frac{1}{2}` → `1/2`, `\alpha` → `α`) otherwise.
+  Currency like `$5 and $10` stays literal.
+- `--tui-graphics-theme` picks the formula ink; the background is always
+  transparent (sixel composites onto black/white instead, as the protocol
+  has no alpha channel).
+
+`--tui-caps` reports what was detected and, on an interactive terminal,
+probes the live terminal (DA1 sixel self-report, cell/window pixel geometry):
+
+```console
+$ hhead --tui-caps
+hhead tui caps: detected terminal capabilities
+  terminal program: iTerm.app
+  graphics protocol: iterm2
+  auto mode resolves to: iterm2
+  truecolor: yes
+  window size: 190x53 cells
+  window pixels: 1710x1110
+  probe DA1 sixel: no
+  probe cell size: 9x18 px
+  probe window size: 1710x1110 px
+  env: TERM=xterm-256color TERM_PROGRAM=iTerm.app COLORTERM=truecolor TMUX=<unset>
+```
 
 Full help:
 

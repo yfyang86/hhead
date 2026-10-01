@@ -1,9 +1,9 @@
 [package]
 name = "hhead"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
-description = "Hex head/dump utility with color, UTF-8 and Markdown/document rendering, image minimaps, directory trees, and a built-in pager"
+description = "Hex head/dump utility with color, UTF-8 and Markdown/document rendering, image minimaps, directory trees, a built-in pager, and terminal graphics (sixel/kitty/iTerm2) with math rendering"
 authors = ["Martingalefan"]
 license = "MIT"
 readme = "Readme.md"

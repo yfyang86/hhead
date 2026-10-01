@@ -465,3 +465,155 @@ fn test_cli_csv_rainbow_binary_falls_back_to_hex() -> Result<(), Box<dyn std::er
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// --tui-caps / --tui-graphics / --tui-graphics-theme
+// ---------------------------------------------------------------------------
+
+/// Minimal valid 2x2 red PNG fixture.
+const PNG_2X2_RED: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 2, 8, 2, 0,
+    0, 0, 253, 212, 154, 115, 0, 0, 0, 16, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 0, 68, 12,
+    16, 10, 0, 31, 238, 3, 253, 139, 95, 20, 212, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+];
+
+fn png_fixture() -> Result<NamedTempFile, Box<dyn std::error::Error>> {
+    // ImageReader guesses the format from the extension, so keep a .png one.
+    let mut f = tempfile::Builder::new().suffix(".png").tempfile()?;
+    f.write_all(PNG_2X2_RED)?;
+    Ok(f)
+}
+
+#[test]
+fn test_cli_tui_caps_without_input() {
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--tui-caps");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("graphics protocol:"))
+        .stdout(predicate::str::contains("truecolor:"))
+        // Piped stdio never probes.
+        .stdout(predicate::str::contains("probe: skipped (not a TTY)"));
+}
+
+#[test]
+fn test_cli_tui_graphics_invalid_value() {
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--tui-graphics=bogus");
+    cmd.assert().failure();
+}
+
+#[test]
+fn test_cli_tui_graphics_theme_invalid() {
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--tui-graphics-theme").arg("blue");
+    cmd.assert().failure();
+}
+
+#[test]
+fn test_cli_tui_graphics_sixel_minimap() -> Result<(), Box<dyn std::error::Error>> {
+    let img = png_fixture()?;
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input")
+        .arg(img.path())
+        .arg("--minimap")
+        .arg("--tui-graphics=sixel")
+        .arg("--bytes")
+        .arg("8");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("\x1bPq"))
+        .stdout(predicate::str::contains("\x1b\\"))
+        // The block minimap is replaced, and the hex dump still follows.
+        .stdout(predicate::str::contains('█').not())
+        .stdout(predicate::str::contains("00000000:"));
+    Ok(())
+}
+
+#[test]
+fn test_cli_tui_graphics_kitty_minimap() -> Result<(), Box<dyn std::error::Error>> {
+    let img = png_fixture()?;
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input")
+        .arg(img.path())
+        .arg("--minimap")
+        .arg("--tui-graphics=kitty")
+        .arg("--bytes")
+        .arg("8");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("\x1b_Gq=2,a=T,f=100"))
+        .stdout(predicate::str::contains('█').not());
+    Ok(())
+}
+
+#[test]
+fn test_cli_tui_graphics_off_keeps_block_minimap() -> Result<(), Box<dyn std::error::Error>> {
+    let img = png_fixture()?;
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input")
+        .arg(img.path())
+        .arg("--minimap")
+        .arg("--tui-graphics=off")
+        .arg("--bytes")
+        .arg("8");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains('█'))
+        .stdout(predicate::str::contains("\x1bPq").not());
+    Ok(())
+}
+
+#[test]
+fn test_cli_tui_graphics_markdown_figure() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let mut img_file = tempfile::Builder::new()
+        .suffix(".png")
+        .tempfile_in(dir.path())?;
+    img_file.write_all(PNG_2X2_RED)?;
+    let md_path = dir.path().join("doc.md");
+    std::fs::write(
+        &md_path,
+        format!(
+            "![cap]({})\n",
+            img_file.path().file_name().unwrap().to_string_lossy()
+        ),
+    )?;
+
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input")
+        .arg(&md_path)
+        .arg("--markdown")
+        .arg("--tui-graphics=iterm2");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("cap"))
+        .stdout(predicate::str::contains("\x1b]1337;File=inline=1"));
+    Ok(())
+}
+
+#[test]
+fn test_cli_tui_graphics_math_unicode_fallback() -> Result<(), Box<dyn std::error::Error>> {
+    // Piped stdout means auto resolves to no protocol; math spans still get
+    // the Unicode approximation.
+    let mut temp_file = NamedTempFile::new()?;
+    temp_file.write_all(b"Euler: $e^{i\\pi} + 1 = 0$\n")?;
+
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input")
+        .arg(temp_file.path())
+        .arg("--markdown")
+        .arg("--tui-graphics");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("Euler: e^(iπ) + 1 = 0"));
+
+    // Without the flag the span stays literal.
+    let mut cmd = Command::cargo_bin("hhead").unwrap();
+    cmd.arg("--input").arg(temp_file.path()).arg("--markdown");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("Euler: $e^{i\\pi} + 1 = 0$"));
+
+    Ok(())
+}

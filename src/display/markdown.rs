@@ -11,49 +11,60 @@ use std::path::{Path, PathBuf};
 
 use colored::Colorize;
 
-use super::minimap::write_minimap;
+use super::graphics::GraphicsOpts;
+use super::minimap::{write_minimap, write_minimap_graphics};
+
+/// Rendering options for Markdown mode.
+#[derive(Debug, Clone, Copy)]
+pub struct MarkdownOpts {
+    /// ANSI-style inline markers and headings.
+    pub color: bool,
+    /// Figure box in terminal cells (rows × cols).
+    pub img_rows: usize,
+    pub img_cols: usize,
+    /// Paint table columns with the `--csv-rainbow` palette.
+    pub rainbow: bool,
+    /// Terminal graphics for figures and math spans.
+    pub graphics: GraphicsOpts,
+}
+
+impl Default for MarkdownOpts {
+    fn default() -> Self {
+        MarkdownOpts {
+            color: false,
+            img_rows: 8,
+            img_cols: 12,
+            rainbow: false,
+            graphics: GraphicsOpts::default(),
+        }
+    }
+}
 
 /// Render a Markdown file to stdout.
 ///
 /// Reads the whole file: rendering needs the complete document, so the
 /// `--bytes` limit does not apply in Markdown mode. Figures are resolved
 /// relative to the Markdown file's directory and drawn on an
-/// `img_rows` × `img_cols` grid.
-pub fn display_markdown(
-    path: &Path,
-    color: bool,
-    img_rows: usize,
-    img_cols: usize,
-    rainbow: bool,
-) -> io::Result<()> {
+/// `img_rows` × `img_cols` grid — as a 256-color minimap, or through a
+/// terminal graphics protocol when `graphics` enables one.
+pub fn display_markdown(path: &Path, opts: MarkdownOpts) -> io::Result<()> {
     let data = std::fs::read(path)?;
     let stdout = io::stdout();
     let mut out = stdout.lock();
-    write_markdown(
-        &mut out,
-        &data,
-        path.parent(),
-        color,
-        img_rows,
-        img_cols,
-        rainbow,
-    )
+    write_markdown(&mut out, &data, path.parent(), opts)
 }
 
 /// Same as [`display_markdown`] but writes to an arbitrary [`Write`] and
 /// takes the already-read bytes. Exposed for testing.
 ///
-/// `rainbow` paints table columns with the `--csv-rainbow` palette; cells
-/// are then rendered with inline markers stripped (no nested ANSI), so the
-/// column color runs the full cell.
+/// `opts.rainbow` paints table columns with the `--csv-rainbow` palette;
+/// cells are then rendered with inline markers stripped (no nested ANSI), so
+/// the column color runs the full cell.
 pub fn write_markdown<W: Write>(
     out: &mut W,
     data: &[u8],
     base_dir: Option<&Path>,
-    color: bool,
-    img_rows: usize,
-    img_cols: usize,
-    rainbow: bool,
+    opts: MarkdownOpts,
 ) -> io::Result<()> {
     let text = String::from_utf8_lossy(data);
     let lines: Vec<&str> = text.lines().collect();
@@ -84,9 +95,34 @@ pub fn write_markdown<W: Write>(
 
         // Figure: a line that is just `![alt](src)`.
         if let Some((alt, src)) = parse_image_line(trimmed) {
-            render_figure(out, &alt, &src, base_dir, color, img_rows, img_cols)?;
+            render_figure(out, &alt, &src, base_dir, opts)?;
             i += 1;
             continue;
+        }
+
+        // Display math: `$$...$$` on one line, or a `$$`-fenced block.
+        // Only with --tui-graphics (graphics.math); otherwise literal.
+        if opts.graphics.math && trimmed.starts_with("$$") {
+            if trimmed.len() > 4 && trimmed.ends_with("$$") {
+                let tex = trimmed[2..trimmed.len() - 2].trim();
+                super::math::write_display_math(out, tex, opts.graphics)?;
+                i += 1;
+                continue;
+            }
+            if trimmed == "$$" {
+                let mut j = i + 1;
+                let mut parts: Vec<&str> = Vec::new();
+                while j < lines.len() && lines[j].trim() != "$$" {
+                    parts.push(lines[j].trim());
+                    j += 1;
+                }
+                if j < lines.len() {
+                    super::math::write_display_math(out, &parts.join(" "), opts.graphics)?;
+                    i = j + 1;
+                    continue;
+                }
+                // Unterminated `$$`: fall through and render literally.
+            }
         }
 
         // GFM table: header row, separator row, then body rows.
@@ -97,24 +133,107 @@ pub fn write_markdown<W: Write>(
                 body.push(lines[j]);
                 j += 1;
             }
-            render_table(out, trimmed, lines[i + 1], &body, color, rainbow)?;
+            render_table(out, trimmed, lines[i + 1], &body, opts.color, opts.rainbow)?;
             i = j;
             continue;
         }
 
         // Heading: 1-6 '#' followed by a space (or nothing).
         if let Some(heading) = parse_heading(trimmed) {
-            writeln!(out, "{}", style(&heading, Style::Heading, color))?;
+            writeln!(out, "{}", style(&heading, Style::Heading, opts.color))?;
             i += 1;
             continue;
         }
 
         // Everything else (lists, quotes, rules, paragraphs) passes through
         // the inline renderer.
-        writeln!(out, "{}", render_inline(line, color))?;
+        writeln!(
+            out,
+            "{}",
+            render_inline_math(line, opts.color, opts.graphics)
+        )?;
         i += 1;
     }
     Ok(())
+}
+
+/// Paragraph inline rendering. With math enabled, `$...$`/`$$...$$` spans
+/// outside code spans become their Unicode approximation; each span is
+/// protected with a private-use placeholder while `render_inline` runs so
+/// math content is never mistaken for emphasis/link markers.
+fn render_inline_math(text: &str, color: bool, graphics: GraphicsOpts) -> String {
+    if !graphics.math {
+        return render_inline(text, color);
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut spans: Vec<String> = Vec::new();
+    let mut protected = String::with_capacity(text.len());
+    let mut i = 0;
+    let mut in_code = false;
+    while i < chars.len() {
+        if chars[i] == '`' {
+            in_code = !in_code;
+            protected.push('`');
+            i += 1;
+            continue;
+        }
+        if !in_code
+            && chars[i] == '$'
+            && let Some((tex, next)) = scan_math_span(&chars, i)
+        {
+            spans.push(super::math::unicode_math(&tex));
+            protected.push_str(&format!("\u{E000}{}\u{E001}", spans.len() - 1));
+            i = next;
+            continue;
+        }
+        protected.push(chars[i]);
+        i += 1;
+    }
+    let mut rendered = render_inline(&protected, color);
+    for (idx, span) in spans.iter().enumerate() {
+        rendered = rendered.replace(&format!("\u{E000}{idx}\u{E001}"), span);
+    }
+    rendered
+}
+
+/// Scan a `$...$` or `$$...$$` span starting at `chars[i] == '$'`. Pandoc
+/// guard rules keep currency literal: the opening `$` is not followed by
+/// whitespace, the closing `$` is not preceded by whitespace and not
+/// followed by a digit. Returns the TeX source and the index just past the
+/// closing marker.
+fn scan_math_span(chars: &[char], i: usize) -> Option<(String, usize)> {
+    let mut j = i + 1;
+    let double = chars.get(j) == Some(&'$');
+    if double {
+        j += 1;
+    }
+    if chars.get(j).map(|c| c.is_whitespace()).unwrap_or(true) {
+        return None;
+    }
+    let mut k = j;
+    while k < chars.len() {
+        if chars[k] == '$' {
+            if chars[k - 1].is_whitespace() {
+                return None;
+            }
+            if double {
+                if chars.get(k + 1) == Some(&'$') {
+                    return Some((chars[j..k].iter().collect(), k + 2));
+                }
+            } else {
+                if chars
+                    .get(k + 1)
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false)
+                {
+                    return None;
+                }
+                return Some((chars[j..k].iter().collect(), k + 1));
+            }
+        }
+        k += 1;
+    }
+    None
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -156,12 +275,10 @@ fn render_figure<W: Write>(
     alt: &str,
     src: &str,
     base_dir: Option<&Path>,
-    color: bool,
-    rows: usize,
-    cols: usize,
+    opts: MarkdownOpts,
 ) -> io::Result<()> {
     let caption = if alt.is_empty() { src } else { alt };
-    writeln!(out, "{}", render_inline(caption, color))?;
+    writeln!(out, "{}", render_inline(caption, opts.color))?;
 
     if src.starts_with("http://") || src.starts_with("https://") {
         return writeln!(out, "[remote image not rendered: {}]", src);
@@ -171,7 +288,15 @@ fn render_figure<W: Write>(
         Some(dir) => dir.join(src),
         None => PathBuf::from(src),
     };
-    match write_minimap(out, &resolved, rows, cols) {
+    // With --tui-graphics, try the protocol emitter first; a decode failure
+    // falls back to the block minimap, which reports the placeholder.
+    if opts.graphics.enabled()
+        && write_minimap_graphics(out, &resolved, opts.img_rows, opts.img_cols, opts.graphics)
+            .is_ok()
+    {
+        return Ok(());
+    }
+    match write_minimap(out, &resolved, opts.img_rows, opts.img_cols) {
         Ok(()) => Ok(()),
         Err(_) => writeln!(out, "[image not rendered: {}]", src),
     }
@@ -441,8 +566,20 @@ mod tests {
     use super::*;
 
     fn capture(text: &str, color: bool) -> String {
+        capture_with(
+            text,
+            MarkdownOpts {
+                color,
+                img_rows: 4,
+                img_cols: 6,
+                ..MarkdownOpts::default()
+            },
+        )
+    }
+
+    fn capture_with(text: &str, opts: MarkdownOpts) -> String {
         let mut buf = Vec::new();
-        write_markdown(&mut buf, text.as_bytes(), None, color, 4, 6, false)
+        write_markdown(&mut buf, text.as_bytes(), None, opts)
             .expect("write_markdown should not fail");
         String::from_utf8(buf).expect("output should be valid utf-8")
     }
@@ -453,8 +590,18 @@ mod tests {
         colored::control::set_override(true);
         let md = "| Name | Age |\n| ---- | --- |\n| Al | 9 |\n";
         let mut buf = Vec::new();
-        write_markdown(&mut buf, md.as_bytes(), None, false, 4, 6, true)
-            .expect("write_markdown should not fail");
+        write_markdown(
+            &mut buf,
+            md.as_bytes(),
+            None,
+            MarkdownOpts {
+                img_rows: 4,
+                img_cols: 6,
+                rainbow: true,
+                ..MarkdownOpts::default()
+            },
+        )
+        .expect("write_markdown should not fail");
         colored::control::unset_override();
         let out = String::from_utf8(buf).unwrap();
         // Column 0 cyan (36), column 1 yellow (33), in header and body.
@@ -579,16 +726,102 @@ mod tests {
             &mut buf,
             b"![cap](pic.png)\n",
             Some(dir.path()),
-            false,
-            2,
-            2,
-            false,
+            MarkdownOpts {
+                img_rows: 2,
+                img_cols: 2,
+                ..MarkdownOpts::default()
+            },
         )
         .expect("write_markdown should not fail");
         let out = String::from_utf8(buf).expect("output should be valid utf-8");
         assert!(out.contains("cap\n"));
         assert!(out.contains("\x1b[38;5;"), "minimap ANSI missing: {out}");
         assert!(out.contains('█'));
+    }
+
+    #[test]
+    fn test_image_rendered_with_graphics_protocol() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let img_path = dir.path().join("pic.png");
+        let mut img = image::RgbImage::new(2, 2);
+        img.put_pixel(0, 0, image::Rgb([255, 0, 0]));
+        img.save(&img_path).expect("save png");
+
+        let mut buf = Vec::new();
+        write_markdown(
+            &mut buf,
+            b"![cap](pic.png)\n",
+            Some(dir.path()),
+            MarkdownOpts {
+                img_rows: 2,
+                img_cols: 2,
+                graphics: GraphicsOpts {
+                    proto: crate::utils::caps::GraphicsProto::Kitty,
+                    ..GraphicsOpts::default()
+                },
+                ..MarkdownOpts::default()
+            },
+        )
+        .expect("write_markdown should not fail");
+        let out = String::from_utf8(buf).expect("output should be valid utf-8");
+        assert!(out.contains("cap\n"));
+        assert!(
+            out.contains("\x1b_Gq=2,a=T,f=100"),
+            "kitty APC missing: {out:?}"
+        );
+        assert!(
+            !out.contains('█'),
+            "block minimap should not be used: {out:?}"
+        );
+    }
+
+    fn capture_math(text: &str) -> String {
+        capture_with(
+            text,
+            MarkdownOpts {
+                graphics: GraphicsOpts {
+                    math: true,
+                    ..GraphicsOpts::default()
+                },
+                ..MarkdownOpts::default()
+            },
+        )
+    }
+
+    #[test]
+    fn test_math_disabled_stays_literal() {
+        let out = capture("Euler: $e^{i\\pi} + 1 = 0$\n", false);
+        assert!(out.contains("Euler: $e^{i\\pi} + 1 = 0$\n"), "{out:?}");
+    }
+
+    #[test]
+    fn test_inline_math_unicode() {
+        let out = capture_math("Euler: $e^{i\\pi} + 1 = 0$ and $\\alpha \\le \\beta$\n");
+        assert!(out.contains("Euler: e^(iπ) + 1 = 0 and α ≤ β\n"), "{out:?}");
+    }
+
+    #[test]
+    fn test_inline_math_currency_stays_literal() {
+        let out = capture_math("it costs $5 and $10 today\n");
+        assert!(out.contains("it costs $5 and $10 today\n"), "{out:?}");
+    }
+
+    #[test]
+    fn test_inline_math_code_span_untouched() {
+        let out = capture_math("literal `$x$` but real $x^2$\n");
+        assert!(out.contains("literal $x$ but real x²\n"), "{out:?}");
+    }
+
+    #[test]
+    fn test_display_math_block_unicode_without_protocol() {
+        let out = capture_math("before\n$$\n\\frac{1}{2} + \\alpha\n$$\nafter\n");
+        assert_eq!(out, "before\n1/2 + α\nafter\n");
+    }
+
+    #[test]
+    fn test_display_math_single_line() {
+        let out = capture_math("$$\\sum_{i=1}^{n} i$$\n");
+        assert_eq!(out, "∑ᵢ₌₁ⁿ i\n");
     }
 
     #[test]

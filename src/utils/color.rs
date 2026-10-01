@@ -33,9 +33,53 @@ pub fn rgb_to_256(r: u8, g: u8, b: u8) -> u8 {
     }
 }
 
+/// The RGB triple the xterm-256 palette assigns to `idx`.
+///
+/// Only indices 16..=255 are meaningful here — those are the ones
+/// [`rgb_to_256`] produces (cube + grayscale). Used to define the sixel
+/// palette (`#Pc;2;r;g;b`); indices 0-15 fall back to black.
+pub fn xterm_256_rgb(idx: u8) -> (u8, u8, u8) {
+    const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+    match idx {
+        16..=231 => {
+            let v = idx - 16;
+            (
+                LEVELS[(v / 36) as usize],
+                LEVELS[((v % 36) / 6) as usize],
+                LEVELS[(v % 6) as usize],
+            )
+        }
+        232..=255 => {
+            let g = 8 + 10 * (idx - 232);
+            (g, g, g)
+        }
+        _ => (0, 0, 0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_xterm_256_rgb_cube_corners() {
+        assert_eq!(xterm_256_rgb(16), (0, 0, 0)); // cube origin
+        assert_eq!(xterm_256_rgb(196), (255, 0, 0)); // 196-16=180 → (5,0,0)
+        assert_eq!(xterm_256_rgb(21), (0, 0, 255)); // 21-16=5 → (0,0,5)
+        assert_eq!(xterm_256_rgb(231), (255, 255, 255)); // (5,5,5)
+    }
+
+    #[test]
+    fn test_xterm_256_rgb_grayscale() {
+        assert_eq!(xterm_256_rgb(232), (8, 8, 8));
+        assert_eq!(xterm_256_rgb(255), (238, 238, 238));
+    }
+
+    #[test]
+    fn test_xterm_256_rgb_basic_indices_fall_back_to_black() {
+        assert_eq!(xterm_256_rgb(0), (0, 0, 0));
+        assert_eq!(xterm_256_rgb(15), (0, 0, 0));
+    }
 
     #[test]
     fn test_rgb_to_256_black() {

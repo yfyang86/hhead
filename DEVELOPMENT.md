@@ -40,7 +40,7 @@ cargo check
 cargo run -- --input Cargo.toml --meta --width 32
 ```
 
-The test suite currently covers 76 unit tests (format detection, metadata extraction, hex formatting, Markdown rendering, color palette, argument parsing, pager helpers) and 24 integration tests that drive the CLI end-to-end via `assert_cmd`.
+The test suite currently covers 119 unit tests (format detection, metadata extraction, hex formatting, Markdown rendering, terminal graphics/caps/math, color palette, argument parsing, pager helpers) and 32 integration tests that drive the CLI end-to-end via `assert_cmd`.
 
 ## Project layout
 
@@ -67,15 +67,18 @@ hhead/
 │   ├── display/
 │   │   ├── mod.rs
 │   │   ├── csv.rs              # rainbow CSV renderer + shared column palette
+│   │   ├── graphics.rs         # `--tui-graphics`: kitty/iTerm2 emitters + in-process sixel encoder
 │   │   ├── hex.rs              # `display_hex` / `write_hex<W: Write>`
 │   │   ├── markdown.rs         # `display_markdown` / `write_markdown<W: Write>` terminal renderer
+│   │   ├── math.rs             # TeX math: typst→PNG (theme-aware) → graphics, Unicode fallback
 │   │   ├── metadata.rs         # `print_metadata` / `write_metadata<W: Write>`
-│   │   ├── minimap.rs          # 256-color image thumbnail renderer
+│   │   ├── minimap.rs          # 256-color image thumbnail renderer (+ graphics-protocol variant)
 │   │   ├── pager.rs            # `run_pager`: built-in less-style pager + pure helpers
 │   │   └── tree.rs             # directory mode: tree listing + ls/du-style meta block
 │   └── utils/
 │       ├── mod.rs
-│       ├── color.rs            # RGB → xterm-256 palette index
+│       ├── caps.rs             # `--tui-caps`: env-based terminal capability detection + live probe
+│       ├── color.rs            # RGB → xterm-256 palette index (and its inverse, for sixel palettes)
 │       └── parsing.rs          # `parse_scale("ROWSxCOLS")`
 └── tests/
     └── integration_tests.rs    # CLI-level tests via assert_cmd
@@ -103,6 +106,8 @@ Design notes:
 - **`display::hex::write_hex`** takes `&mut impl Write`, so tests capture output into a `Vec<u8>` and assert on the exact bytes. `display_hex` is a thin wrapper that locks `stdout` once for atomic output. When adding new display functions, follow the same pattern.
 - **No panics on malformed input.** Format parsers must bounds-check every index. Use explicit length guards *and* identity checks (e.g. confirm chunk tags) before reading structured fields.
 - **The pager (`display::pager`)** owns the only terminal I/O beyond plain stdout: raw mode + alternate screen via `crossterm` (added for this feature; it is the one place a terminal library is justified). Pure helpers (`visible_width`, `truncate_ansi`, `find_matches`, `clamp_offset`) are separated out and unit-tested. When stdin/stdout is not a TTY, `run_pager` falls back to dumping the content so piped use stays deterministic.
+- **Terminal graphics (`display::graphics`, `utils::caps`)** power `--tui-graphics`/`--tui-caps`. Capability detection is env-based and hermetically testable via `TerminalCaps::detect_with`; the live query-response probe (DA1, CSI 16t/14t) exists only for the `--tui-caps` diagnostic, never the render path, so piped output stays deterministic. The sixel encoder is in-process (`rgb_to_256` doubles as the quantizer) — no external `img2sixel`, no new dependencies. Auto mode additionally requires a TTY; forced protocols always emit (with tmux DCS passthrough wrapping when needed). The pager is excluded: image escapes cannot survive its alternate-screen redraws.
+- **Math (`display::math`)** renders `$...$`/`$$...$$` spans in Markdown mode when `--tui-graphics` is on: display math compiles to a transparent PNG via external `typst` (≥ 0.4; the ink follows `--tui-graphics-theme`, white for `dark`) and goes through the graphics path; everything else degrades to a pure-Rust Unicode approximation. PDF-era typst that writes PDF bytes to a `.png` path is rejected by a magic-byte check.
 - **`--mode-anydoc`** is thin glue in `main.rs`: `markdown_source` runs `anydoc::to_markdown_bytes` (content detection with extension fallback for CSV) and hands the result to the same `write_markdown` renderer `--markdown` uses. On conversion failure it warns and falls back — text input renders as Markdown, anything else as a hex dump. `anydoc`'s conversion needs the `log` facade, which is a no-op without a logger; no logging setup is required.
 
 ## Adding a new file-format parser
